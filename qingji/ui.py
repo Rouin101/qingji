@@ -71,8 +71,16 @@ def get_database() -> Any:
     return database
 
 
+def is_demo_project(project: Mapping[str, Any] | None) -> bool:
+    """Return whether a project is Qingji's built-in fictional workspace."""
+
+    from .demo import DEMO_PROJECT_NAME
+
+    return bool(project and project.get("name") == DEMO_PROJECT_NAME)
+
+
 def get_demo_context() -> tuple[Any, int, dict[str, Any]]:
-    """Load the explicitly fictional demo project shared by all pages."""
+    """Load the active project, using the fictional demo as a safe fallback."""
 
     from .demo import ensure_demo_project
 
@@ -233,20 +241,31 @@ def render_page_intro(kicker: str, title: str, lead: str) -> None:
     st.markdown(f'<div class="qj-lead">{escape_html(lead)}</div>', unsafe_allow_html=True)
 
 
-def render_demo_banner() -> None:
+def render_demo_banner(project: Mapping[str, Any] | None = None) -> None:
+    if is_demo_project(project) or project is None:
+        title = "虚构测试数据"
+        message = (
+            "当前演示项目、人物、联系方式和场景均为自行编写的虚构内容，"
+            "仅用于产品试验与功能测试，不对应任何真实受访者或实际调研结论。"
+        )
+    else:
+        title = "用户项目工作区"
+        message = (
+            "请只导入有权使用的材料，并如实记录授权状态。"
+            "真实材料会先在本地脱敏；未确认授权的内容不会进入结论核验或可信导出。"
+        )
     st.markdown(
-        """
-        <div class="qj-demo">
-          <strong>虚构测试数据</strong><br>
-          当前演示项目、人物、联系方式和场景均为自行编写的虚构内容，
-          仅用于产品试验与功能测试，不对应任何真实受访者或实际调研结论。
-        </div>
-        """,
+        (
+            '<div class="qj-demo">'
+            f"<strong>{escape_html(title)}</strong><br>"
+            f"{escape_html(message)}"
+            "</div>"
+        ),
         unsafe_allow_html=True,
     )
 
 
-def render_sidebar_note() -> None:
+def render_sidebar_note(project: Mapping[str, Any] | None = None) -> None:
     with st.sidebar:
         st.page_link("app.py", label="项目概览")
         st.page_link("pages/1_材料与证据.py", label="材料与证据")
@@ -255,8 +274,14 @@ def render_sidebar_note() -> None:
         st.divider()
         st.markdown("### 青迹")
         st.caption("让实践有迹可循，让结论有据可查。")
-        st.info("演示库内全部是虚构测试数据。真实材料须先获授权，并在本地确认脱敏。")
-        st.caption("v0.1 · 单人开发版")
+        if is_demo_project(project) or project is None:
+            st.info("演示库内全部是虚构测试数据。真实材料须先获授权，并在本地确认脱敏。")
+        else:
+            st.info(
+                f"当前项目：{project.get('name', '未命名项目')}\n\n"
+                "项目切换与新建请返回“项目概览”。"
+            )
+        st.caption("v0.2 · 单人开发版")
 
 
 def row_to_dict(row: Any) -> dict[str, Any]:

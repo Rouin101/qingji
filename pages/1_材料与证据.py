@@ -16,6 +16,7 @@ from qingji.ui import (
     evidence_card_html,
     format_datetime,
     get_demo_context,
+    is_demo_project,
     render_demo_banner,
     render_page_intro,
     render_sidebar_note,
@@ -24,30 +25,39 @@ from qingji.workflow import import_text_material
 
 
 configure_page("材料与证据", "🗂️")
-render_sidebar_note()
+
+try:
+    db, project_id, project = get_demo_context()
+except Exception as exc:
+    st.error(f"读取项目失败：{exc}")
+    st.stop()
+
+render_sidebar_note(project)
 render_page_intro(
     "01 · MATERIALS & EVIDENCE",
     "材料与证据",
     "先说明材料从哪里来、是否获得授权，再让系统生成待人工审核的证据卡。",
 )
-render_demo_banner()
-
-try:
-    db, project_id, _ = get_demo_context()
-except Exception as exc:
-    st.error(f"读取演示项目失败：{exc}")
-    st.stop()
+render_demo_banner(project)
+demo_mode = is_demo_project(project)
 
 tab_import, tab_review, tab_materials = st.tabs(
     ["导入文字材料", "审核证据卡", "材料清单"]
 )
 
 with tab_import:
-    st.markdown("### 导入新的测试材料")
-    st.caption(
-        "可粘贴文字，或上传 UTF-8 编码的 .txt/.md 文件。"
-        "真实材料必须取得相应授权；当前演示请只使用虚构内容。"
-    )
+    if demo_mode:
+        st.markdown("### 导入新的测试材料")
+        st.caption(
+            "可粘贴文字，或上传 UTF-8 编码的 .txt/.md 文件。"
+            "当前是内置演示项目，请只使用虚构测试内容。"
+        )
+    else:
+        st.markdown("### 导入新的文字材料")
+        st.caption(
+            "可粘贴文字，或上传 UTF-8 编码的 .txt/.md 文件。"
+            "请如实填写材料属性和授权状态；未确认授权的材料不会进入核验。"
+        )
 
     uploaded = st.file_uploader(
         "上传文字文件（可选）",
@@ -64,6 +74,19 @@ with tab_import:
             st.error(uploaded_error)
 
     with st.form("material_import_form", clear_on_submit=True):
+        if demo_mode:
+            is_fictional = True
+        else:
+            material_nature = st.radio(
+                "材料属性",
+                options=["real", "fictional"],
+                format_func=lambda item: (
+                    "真实材料" if item == "real" else "虚构测试数据"
+                ),
+                horizontal=True,
+                help="真实材料必须有权记录和使用；虚构材料必须明确标注。",
+            )
+            is_fictional = material_nature == "fictional"
         initial_text = uploaded_text or st.session_state.get(
             "material_draft_text", ""
         )
@@ -83,25 +106,39 @@ with tab_import:
                 value=(
                     uploaded.name
                     if uploaded is not None
-                    else "手工录入_虚构测试笔记.txt"
+                    else (
+                        "手工录入_虚构测试笔记.txt"
+                        if is_fictional
+                        else "手工录入_经授权记录.txt"
+                    )
                 ),
             )
-            source_role = st.selectbox(
-                "来源角色",
+            source_options = (
                 [
                     "模拟受访者（虚构）",
                     "模拟工作人员（虚构）",
                     "模拟调研团队观察员",
                     "虚构正式记录",
                     "团队分析",
-                ],
+                ]
+                if is_fictional
+                else ["受访者", "工作人员", "调研团队观察员", "正式记录", "团队分析"]
+            )
+            source_role = st.selectbox(
+                "来源角色",
+                source_options,
                 help="来源角色会影响默认的证据类型，但仍需人工审核。",
             )
             captured_at = st.date_input("采集日期", value=date.today())
         with metadata_right:
             context = st.text_input(
                 "采集场景",
-                value="虚构的便民服务体验访谈，仅用于青迹功能测试",
+                value=(
+                    "虚构的便民服务体验访谈，仅用于青迹功能测试"
+                    if is_fictional
+                    else ""
+                ),
+                placeholder="说明材料获取的时间、地点或活动场景",
             )
             consent_choice = st.radio(
                 "记录与使用授权",
@@ -116,8 +153,12 @@ with tab_import:
                 help="适合标记姓名、精确住址或本项目特有身份信息。",
             )
 
-        fictional_confirmed = st.checkbox(
-            "我确认本次提交的是虚构测试数据，不对应真实个人或真实调研结论。",
+        material_confirmed = st.checkbox(
+            (
+                "我确认本次提交的是虚构测试数据，不对应真实个人或真实调研结论。"
+                if is_fictional
+                else "我确认已如实填写授权状态，并会在引用或导出前复核脱敏文本。"
+            ),
             value=False,
         )
         submitted = st.form_submit_button(
@@ -135,8 +176,8 @@ with tab_import:
             st.error("请填写材料名称，便于后续追溯。")
         elif not context.strip():
             st.error("请填写采集场景。")
-        elif not fictional_confirmed:
-            st.error("当前演示只接收虚构测试数据，请先勾选确认。")
+        elif not material_confirmed:
+            st.error("请先确认材料属性、授权状态和脱敏复核责任。")
         else:
             custom_terms = [
                 item.strip()
@@ -155,7 +196,7 @@ with tab_import:
                         captured_at=captured_at.isoformat(),
                         consent_status=ConsentStatus(consent_choice),
                         custom_sensitive_terms=custom_terms,
-                        is_fictional=True,
+                        is_fictional=is_fictional,
                     )
             except Exception as exc:
                 st.error(f"材料导入失败：{exc}")

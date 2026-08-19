@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import streamlit as st
 
+from qingji.projects import activate_project, create_project_workspace
 from qingji.ui import (
     VERDICT_LABELS,
     configure_page,
     empty_state,
     format_datetime,
     get_demo_context,
+    is_demo_project,
     render_demo_banner,
     render_page_intro,
     render_sidebar_note,
@@ -18,13 +20,6 @@ from qingji.ui import (
 
 
 configure_page("项目概览", "🌱")
-render_sidebar_note()
-render_page_intro(
-    "QINGJI · 可信社会实践",
-    "青迹",
-    "把已授权的现场材料变成可回溯证据，检查每一句结论是否说过了头。",
-)
-render_demo_banner()
 
 try:
     db, project_id, project = get_demo_context()
@@ -33,8 +28,59 @@ except Exception as exc:
     st.info("请确认当前目录可写，并重新运行应用。")
     st.stop()
 
+render_sidebar_note(project)
+render_page_intro(
+    "QINGJI · 可信社会实践",
+    "青迹",
+    "把已授权的现场材料变成可回溯证据，检查每一句结论是否说过了头。",
+)
+render_demo_banner(project)
+
+st.markdown("### 项目工作区")
+projects = db.list_projects()
+project_by_id = {int(item["id"]): item for item in projects}
+project_ids = list(project_by_id)
+selected_project_id = st.selectbox(
+    "当前项目",
+    options=project_ids,
+    index=project_ids.index(project_id),
+    format_func=lambda item: project_by_id[item]["name"],
+    help="各项目的材料、证据、结论和补证任务相互隔离。",
+)
+if int(selected_project_id) != project_id:
+    activate_project(st.session_state, int(selected_project_id))
+    st.rerun()
+
+with st.expander("新建项目"):
+    with st.form("create_project_form", clear_on_submit=True):
+        new_project_name = st.text_input(
+            "项目名称",
+            placeholder="例如：社区公共服务体验调研",
+        )
+        new_project_description = st.text_area(
+            "项目说明（可选）",
+            placeholder="简要说明调研对象、材料范围和预期成果。",
+            height=100,
+        )
+        create_submitted = st.form_submit_button(
+            "创建并进入项目", type="primary", width="stretch"
+        )
+    if create_submitted:
+        try:
+            created_project_id = create_project_workspace(
+                db, new_project_name, new_project_description
+            )
+        except ValueError as exc:
+            st.error(str(exc))
+        except Exception as exc:
+            st.error(f"创建项目失败：{exc}")
+        else:
+            activate_project(st.session_state, created_project_id)
+            st.success("项目已创建，正在进入新工作区。")
+            st.rerun()
+
 st.markdown(f"### {project['name']}")
-st.caption(project.get("description") or "社会实践证据链演示项目")
+st.caption(project.get("description") or "尚未填写项目说明。")
 
 try:
     stats = db.get_project_stats(project_id)
@@ -135,13 +181,13 @@ with boundary_columns[2]:
         """
     )
 
-with st.expander("演示建议（3分钟）"):
-    st.markdown(
-        """
-        1. 在“材料与证据”查看已授权、已脱敏的虚构测试材料。
-        2. 核验“当地居民普遍认为线上办事平台使用困难”。
-        3. 观察青迹如何识别“普遍”这一强量词，并指出样本边界。
-        4. 添加一份持不同观点的虚构补充材料，重新核验。
-        5. 在“成果与缺口”下载可追溯的 Markdown。
-        """
-    )
+if is_demo_project(project):
+    with st.expander("虚构测试项目的使用路径"):
+        st.markdown(
+            """
+            1. 在“材料与证据”查看已授权、已脱敏的虚构测试材料。
+            2. 核验“当地居民普遍认为线上办事平台使用困难”。
+            3. 添加一份持不同观点的虚构补充材料，重新核验。
+            4. 在“成果与缺口”下载可追溯的 Markdown。
+            """
+        )

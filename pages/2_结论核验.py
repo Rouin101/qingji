@@ -13,6 +13,7 @@ from qingji.ui import (
     empty_state,
     evidence_card_html,
     get_demo_context,
+    is_demo_project,
     render_demo_banner,
     render_page_intro,
     render_sidebar_note,
@@ -32,30 +33,36 @@ RULE_FLAG_LABELS = {
 
 
 configure_page("结论核验", "🔎")
-render_sidebar_note()
+
+try:
+    db, project_id, project = get_demo_context()
+except Exception as exc:
+    st.error(f"读取项目失败：{exc}")
+    st.stop()
+
+render_sidebar_note(project)
 render_page_intro(
     "02 · CLAIM CHECK",
     "结论核验",
     "输入一句准备写入报告的话。青迹只使用已授权、已审核的证据，说明它目前能支持到什么程度。",
 )
-render_demo_banner()
-
-try:
-    db, project_id, _ = get_demo_context()
-except Exception as exc:
-    st.error(f"读取演示项目失败：{exc}")
-    st.stop()
+render_demo_banner(project)
+demo_mode = is_demo_project(project)
 
 st.markdown("### 核验一句话")
 with st.form("claim_check_form"):
     claim_text = st.text_area(
         "待核验结论",
-        value=st.session_state.get("claim_draft", EXAMPLE_CLAIM),
+        value=st.session_state.get(
+            "claim_draft", EXAMPLE_CLAIM if demo_mode else ""
+        ),
         height=110,
         help="建议一次只检查一个清晰、可验证的事实性表述。",
     )
     st.caption(
         "试着保留“普遍”二字：青迹会检查现有样本能否支撑这一群体性表达。"
+        if demo_mode
+        else "一次只检查一个明确表述；系统不会引用未授权或未批准的材料。"
     )
     submitted = st.form_submit_button(
         "开始核验", type="primary", width="stretch"
@@ -164,20 +171,32 @@ if tasks:
         )
 
 st.markdown("### 补证与重新核验")
-st.caption(
-    "下面的补充材料也是虚构测试数据，并提供一个与原结论方向不同的观点，"
-    "用于演示结论状态如何随证据变化。"
-)
-action_left, action_right = st.columns(2)
-with action_left:
-    add_supplement = st.button(
-        "加入虚构的不同观点材料",
-        type="primary",
-        width="stretch",
+if demo_mode:
+    st.caption(
+        "下面的补充材料也是虚构测试数据，并提供一个与原结论方向不同的观点，"
+        "用于测试结论状态如何随证据变化。"
     )
-with action_right:
+    action_left, action_right = st.columns(2)
+    with action_left:
+        add_supplement = st.button(
+            "加入虚构的不同观点材料",
+            type="primary",
+            width="stretch",
+        )
+    with action_right:
+        rerun_check = st.button(
+            "重新核验当前结论",
+            width="stretch",
+        )
+else:
+    add_supplement = False
+    st.info(
+        "请先到“材料与证据”导入新的经授权材料，"
+        "并批准相应证据卡，然后回到这里重新核验。"
+    )
     rerun_check = st.button(
         "重新核验当前结论",
+        type="primary",
         width="stretch",
     )
 

@@ -20,13 +20,6 @@ from qingji.ui import (
 
 
 configure_page("成果与缺口", "📄")
-render_sidebar_note()
-render_page_intro(
-    "03 · OUTPUT & GAPS",
-    "成果与缺口",
-    "把已经核验的表述、结论—证据关系和未解决任务放在一起，导出时继续保留来源定位。",
-)
-render_demo_banner()
 
 try:
     db, project_id, project = get_demo_context()
@@ -36,6 +29,14 @@ try:
 except Exception as exc:
     st.error(f"读取成果数据失败：{exc}")
     st.stop()
+
+render_sidebar_note(project)
+render_page_intro(
+    "03 · OUTPUT & GAPS",
+    "成果与缺口",
+    "把已经核验的表述、结论—证据关系和未解决任务放在一起，导出时继续保留来源定位。",
+)
+render_demo_banner(project)
 
 summary_columns = st.columns(4)
 summary_columns[0].metric("核验记录", len(claims))

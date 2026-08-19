@@ -154,8 +154,6 @@ def import_text_material(
         )
     if consent != ConsentStatus.CONFIRMED.value:
         warnings.append("材料已保存，但在授权确认前不会生成可引用证据卡。")
-    elif not is_fictional:
-        warnings.append("该材料未标记为虚构测试数据。真实材料必须取得相应授权。")
 
     evidence_card_ids: list[int] = []
     if consent == ConsentStatus.CONFIRMED.value:

@@ -120,6 +120,26 @@ class WorkflowTestCase(unittest.TestCase):
             self.db.list_claim_evidence_links(stored.claim_id), []
         )
 
+    def test_authorized_real_material_is_supported_without_demo_warning(self) -> None:
+        result = import_text_material(
+            self.db,
+            self.project_id,
+            "受访者表示：首次操作时需要工作人员协助。",
+            original_filename="经授权访谈记录.txt",
+            source_role="受访者",
+            context="社区服务体验访谈",
+            captured_at="2026-08-19",
+            consent_status=ConsentStatus.CONFIRMED,
+            custom_sensitive_terms=None,
+            is_fictional=False,
+        )
+
+        material = self.db.get_material(result.material_id)
+        self.assertEqual(material["is_fictional"], 0)
+        self.assertEqual(material["consent_status"], "confirmed")
+        self.assertEqual(result.warnings, [])
+        self.assertGreater(len(result.evidence_card_ids), 0)
+
     def test_raw_and_redacted_files_are_saved_separately(self) -> None:
         original = (
             "联系人虚构姓名，手机13812345678。"
