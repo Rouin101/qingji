@@ -4,6 +4,11 @@ from __future__ import annotations
 
 import streamlit as st
 
+from qingji.evaluation import (
+    build_eval_template,
+    parse_eval_csv,
+    run_project_retrieval_eval,
+)
 from qingji.export import export_project_markdown
 from qingji.ui import (
     TASK_STATUS_LABELS,
@@ -17,6 +22,65 @@ from qingji.ui import (
     render_page_intro,
     render_sidebar_note,
 )
+
+
+EVAL_CATEGORY_LABELS = {
+    "direct": "直接匹配",
+    "paraphrase": "同义改写",
+    "zero_hit": "零命中",
+    "conflict": "冲突召回",
+    "custom": "自定义",
+}
+
+
+def render_eval_report(report: dict) -> None:
+    st.markdown("#### 最近一次评测结果")
+    summary_columns = st.columns(3)
+    summary_columns[0].metric("用例数", report.get("case_count", 0))
+    summary_columns[1].metric("通过数", report.get("passed_count", 0))
+    summary_columns[2].metric(
+        "通过率", f"{float(report.get('pass_rate', 0)):.0%}"
+    )
+    categories = report.get("categories") or {}
+    if categories:
+        category_columns = st.columns(len(categories))
+        for column, (name, summary) in zip(
+            category_columns, categories.items()
+        ):
+            column.metric(
+                EVAL_CATEGORY_LABELS.get(name, name),
+                f"{summary.get('passed_count', 0)}/"
+                f"{summary.get('case_count', 0)}",
+            )
+    result_rows = []
+    for result in report.get("results") or []:
+        expected_ids = result.get("expected_evidence_ids") or []
+        ranks = result.get("expected_id_ranks") or {}
+        result_rows.append(
+            {
+                "结果": "通过" if result.get("passed") else "未通过",
+                "用例": result.get("name", ""),
+                "类别": EVAL_CATEGORY_LABELS.get(
+                    result.get("category"), result.get("category", "")
+                ),
+                "目标证据": (
+                    "、".join(f"E{item}" for item in expected_ids)
+                    if expected_ids
+                    else "要求零命中"
+                ),
+                "目标排名": (
+                    "、".join(
+                        f"E{key}: {value if value is not None else '未召回'}"
+                        for key, value in ranks.items()
+                    )
+                    if ranks
+                    else "—"
+                ),
+                "相关候选数": result.get("relevant_count", 0),
+            }
+        )
+    if result_rows:
+        st.dataframe(result_rows, width="stretch", hide_index=True)
 
 
 configure_page("成果与缺口", "📄")
@@ -50,8 +114,8 @@ summary_columns[3].metric(
     "已完成补证", sum(task.get("status") == "done" for task in tasks)
 )
 
-tab_claims, tab_tasks, tab_mapping, tab_export = st.tabs(
-    ["已核验结论", "补证任务", "证据对应表", "可信导出"]
+tab_claims, tab_tasks, tab_mapping, tab_export, tab_eval = st.tabs(
+    ["已核验结论", "补证任务", "证据对应表", "可信导出", "检索评测"]
 )
 
 with tab_claims:
@@ -219,3 +283,117 @@ with tab_export:
     st.warning(
         "导出不是事实认证。正式使用前仍需项目成员回看原材料、授权记录和来源定位。"
     )
+
+with tab_eval:
+    st.markdown("### 自定义检索评测")
+    st.caption(
+        "评测只在本地运行并保存到当前项目。目标证据必须属于当前项目，"
+        "且已确认授权、已人工批准。评测成绩不能替代真实项目上的人工检查。"
+    )
+    evidence_rows = db.list_evidence_cards(project_id)
+    eligible_rows = [
+        row
+        for row in evidence_rows
+        if row.get("review_status") == "approved"
+        and row.get("consent_status") == "confirmed"
+    ]
+    st.metric("当前可作为评测目标的证据", len(eligible_rows))
+    if eligible_rows:
+        with st.expander("查看可用证据编号"):
+            st.dataframe(
+                [
+                    {
+                        "证据编号": f"E{row['id']}",
+                        "标题": row.get("title", ""),
+                        "来源定位": row.get("source_locator") or "—",
+                    }
+                    for row in eligible_rows
+                ],
+                width="stretch",
+                hide_index=True,
+            )
+    else:
+        empty_state("当前没有已授权、已批准的证据，暂时无法建立目标召回用例。")
+
+    st.download_button(
+        "下载当前项目的 CSV 模板",
+        data=build_eval_template(evidence_rows),
+        file_name=f"青迹_项目{project_id}_检索评测模板.csv",
+        mime="text/csv",
+        width="stretch",
+    )
+    uploaded_eval = st.file_uploader(
+        "上传填写后的评测 CSV",
+        type=["csv"],
+        key=f"retrieval_eval_upload_{project_id}",
+        help="文件必须为 UTF-8 编码，单次最多 100 个用例。",
+    )
+    top_k = st.slider(
+        "候选范围 Top-K",
+        min_value=1,
+        max_value=10,
+        value=3,
+        key=f"retrieval_eval_top_k_{project_id}",
+    )
+    parsed_cases = None
+    if uploaded_eval is not None:
+        try:
+            parsed_cases = parse_eval_csv(uploaded_eval.getvalue())
+        except ValueError as exc:
+            st.error(str(exc))
+        else:
+            st.success(f"已读取 {len(parsed_cases)} 个评测用例。")
+            st.dataframe(
+                [
+                    {
+                        "用例": case.name,
+                        "类别": EVAL_CATEGORY_LABELS.get(
+                            case.category, case.category
+                        ),
+                        "查询": case.query,
+                        "目标证据": (
+                            "、".join(
+                                f"E{item}"
+                                for item in case.expected_evidence_ids
+                            )
+                            if case.expected_evidence_ids
+                            else "要求零命中"
+                        ),
+                    }
+                    for case in parsed_cases
+                ],
+                width="stretch",
+                hide_index=True,
+            )
+
+    if st.button(
+        "运行自定义评测",
+        type="primary",
+        disabled=parsed_cases is None,
+        key=f"run_retrieval_eval_{project_id}",
+        width="stretch",
+    ):
+        try:
+            with st.spinner("正在本地运行检索评测……"):
+                report = run_project_retrieval_eval(
+                    db, project_id, parsed_cases, top_k=top_k
+                )
+        except ValueError as exc:
+            st.error(str(exc))
+        except Exception as exc:
+            st.error(f"检索评测运行失败：{exc}")
+        else:
+            st.session_state[f"retrieval_eval_report_{project_id}"] = report
+            st.success(
+                f"评测完成：{report['passed_count']}/"
+                f"{report['case_count']} 个用例通过。"
+            )
+
+    current_report = st.session_state.get(
+        f"retrieval_eval_report_{project_id}"
+    )
+    if current_report is None:
+        latest_run = db.get_latest_project_run(project_id, "retrieval_eval")
+        current_report = latest_run.get("output") if latest_run else None
+    if current_report:
+        render_eval_report(current_report)

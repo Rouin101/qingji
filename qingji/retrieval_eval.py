@@ -18,6 +18,7 @@ class RetrievalEvalCase:
     category: str
     query: str
     expected_title_fragments: tuple[str, ...] = ()
+    expected_evidence_ids: tuple[int, ...] = ()
     expect_no_relevant: bool = False
 
 
@@ -91,6 +92,7 @@ def evaluate_retrieval(
         relevant_titles = [
             match.candidate.title for match in relevant_matches
         ]
+        relevant_ids = [int(match.candidate.id) for match in relevant_matches]
         expected_ranks = {
             fragment: next(
                 (
@@ -102,14 +104,28 @@ def evaluate_retrieval(
             )
             for fragment in case.expected_title_fragments
         }
+        expected_id_ranks = {
+            evidence_id: (
+                relevant_ids.index(int(evidence_id)) + 1
+                if int(evidence_id) in relevant_ids
+                else None
+            )
+            for evidence_id in case.expected_evidence_ids
+        }
         if case.expect_no_relevant:
             passed = not relevant_matches
         else:
-            passed = bool(expected_ranks) and all(
-                rank is not None for rank in expected_ranks.values()
+            all_expected_ranks = [
+                *expected_ranks.values(),
+                *expected_id_ranks.values(),
+            ]
+            passed = bool(all_expected_ranks) and all(
+                rank is not None for rank in all_expected_ranks
             )
         hit_ranks = [
-            rank for rank in expected_ranks.values() if rank is not None
+            rank
+            for rank in [*expected_ranks.values(), *expected_id_ranks.values()]
+            if rank is not None
         ]
         results.append(
             {
@@ -119,12 +135,17 @@ def evaluate_retrieval(
                 "expected_title_fragments": list(
                     case.expected_title_fragments
                 ),
+                "expected_evidence_ids": list(case.expected_evidence_ids),
                 "expect_no_relevant": case.expect_no_relevant,
                 "passed": passed,
                 "hit": passed,
                 "hit_rank": min(hit_ranks) if hit_ranks else None,
                 "expected_ranks": expected_ranks,
+                "expected_id_ranks": {
+                    str(key): value for key, value in expected_id_ranks.items()
+                },
                 "relevant_count": len(relevant_matches),
+                "relevant_evidence_ids": relevant_ids,
                 "relevant_titles": relevant_titles,
                 "top_titles": [match.candidate.title for match in matches],
                 "top_scores": [round(float(match.score), 4) for match in matches],

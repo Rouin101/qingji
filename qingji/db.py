@@ -1188,6 +1188,18 @@ class Database:
             ).fetchone()
         return self._row(row)
 
+    def get_latest_project_run(
+        self, project_id: int, run_type: str
+    ) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM agent_runs "
+                "WHERE project_id = ? AND run_type = ? "
+                "ORDER BY id DESC LIMIT 1",
+                (project_id, run_type),
+            ).fetchone()
+        return self._row(row)
+
     # Dashboard/statistics
     def get_project_stats(self, project_id: int) -> dict[str, int]:
         with self.connect() as connection:
