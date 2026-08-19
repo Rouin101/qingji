@@ -87,7 +87,7 @@ def get_demo_context() -> tuple[Any, int, dict[str, Any]]:
     database = get_database()
     project_id = st.session_state.get("qingji_project_id")
     project = database.get_project(project_id) if project_id else None
-    if project is None:
+    if project is None or project.get("archived_at"):
         project_id = int(ensure_demo_project(database))
         st.session_state["qingji_project_id"] = project_id
         project = database.get_project(project_id)
@@ -281,7 +281,7 @@ def render_sidebar_note(project: Mapping[str, Any] | None = None) -> None:
                 f"当前项目：{project.get('name', '未命名项目')}\n\n"
                 "项目切换与新建请返回“项目概览”。"
             )
-        st.caption("v0.2 · 单人开发版")
+        st.caption("v0.3 · 单人开发版")
 
 
 def row_to_dict(row: Any) -> dict[str, Any]:

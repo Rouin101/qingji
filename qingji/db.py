@@ -45,7 +45,7 @@ def _json(value: Any, default: Any) -> str:
 class Database:
     """Small CRUD wrapper around Qingji's SQLite database."""
 
-    PROJECT_FIELDS = {"name", "description", "updated_at"}
+    PROJECT_FIELDS = {"name", "description", "archived_at", "updated_at"}
     MATERIAL_FIELDS = {
         "project_id",
         "material_type",
@@ -136,6 +136,7 @@ class Database:
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL UNIQUE,
             description TEXT NOT NULL DEFAULT '',
+            archived_at TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
@@ -288,6 +289,14 @@ class Database:
 
         with self.connect() as connection:
             connection.executescript(schema)
+            project_columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(projects)")
+            }
+            if "archived_at" not in project_columns:
+                connection.execute(
+                    "ALTER TABLE projects ADD COLUMN archived_at TEXT"
+                )
             self.search_backend = self._initialize_search(connection)
 
     def _initialize_search(self, connection: sqlite3.Connection) -> str:
@@ -441,10 +450,22 @@ class Database:
             ).fetchone()
         return self._row(row)
 
-    def list_projects(self) -> list[dict[str, Any]]:
+    def list_projects(
+        self, *, include_archived: bool = False
+    ) -> list[dict[str, Any]]:
+        where = "" if include_archived else "WHERE archived_at IS NULL"
         with self.connect() as connection:
             rows = connection.execute(
-                "SELECT * FROM projects ORDER BY created_at DESC, id DESC"
+                f"SELECT * FROM projects {where} "
+                "ORDER BY created_at DESC, id DESC"
+            ).fetchall()
+        return self._rows(rows)
+
+    def list_archived_projects(self) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM projects WHERE archived_at IS NOT NULL "
+                "ORDER BY archived_at DESC, id DESC"
             ).fetchall()
         return self._rows(rows)
 
@@ -1108,4 +1129,3 @@ class Database:
         with self.connect() as connection:
             value = connection.execute("PRAGMA foreign_keys").fetchone()[0]
         return bool(value)
-

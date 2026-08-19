@@ -48,6 +48,25 @@ class DatabaseTestCase(unittest.TestCase):
             {"fts5_trigram", "fts5_unicode61", "like"},
         )
 
+    def test_initialize_migrates_existing_projects_for_archiving(self) -> None:
+        legacy_path = Path(self.temp_dir.name) / "legacy.db"
+        with sqlite3.connect(legacy_path) as connection:
+            connection.execute(
+                "CREATE TABLE projects ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "name TEXT NOT NULL UNIQUE, "
+                "description TEXT NOT NULL DEFAULT '', "
+                "created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
+            )
+        legacy_db = Database(legacy_path)
+        legacy_db.initialize()
+        with sqlite3.connect(legacy_path) as connection:
+            columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info(projects)")
+            }
+        self.assertIn("archived_at", columns)
+
     def test_crud_search_stats_and_cascade(self) -> None:
         project_id = self.db.create_project("测试项目", "仅供测试")
         material_id = self.db.create_material(

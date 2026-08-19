@@ -4,7 +4,15 @@ from __future__ import annotations
 
 import streamlit as st
 
-from qingji.projects import activate_project, create_project_workspace
+from qingji.demo import DEMO_PROJECT_NAME
+from qingji.projects import (
+    activate_project,
+    archive_project_workspace,
+    create_project_workspace,
+    delete_project_workspace,
+    rename_project_workspace,
+    restore_project_workspace,
+)
 from qingji.ui import (
     VERDICT_LABELS,
     configure_page,
@@ -78,6 +86,123 @@ with st.expander("新建项目"):
             activate_project(st.session_state, created_project_id)
             st.success("项目已创建，正在进入新工作区。")
             st.rerun()
+
+if not is_demo_project(project):
+    with st.expander("管理当前项目"):
+        st.caption("重命名会保留全部数据；归档后项目将从日常工作区列表隐藏。")
+        with st.form(f"rename_project_{project_id}"):
+            edited_project_name = st.text_input(
+                "新的项目名称", value=project["name"]
+            )
+            edited_project_description = st.text_area(
+                "项目说明",
+                value=project.get("description") or "",
+                height=100,
+            )
+            rename_submitted = st.form_submit_button("保存项目信息")
+        if rename_submitted:
+            try:
+                rename_project_workspace(
+                    db,
+                    project_id,
+                    edited_project_name,
+                    edited_project_description,
+                )
+            except ValueError as exc:
+                st.error(str(exc))
+            except Exception as exc:
+                st.error(f"保存项目信息失败：{exc}")
+            else:
+                st.success("项目信息已更新。")
+                st.rerun()
+
+        st.markdown("**归档项目**")
+        st.caption("归档不会删除任何材料，可随时从下方恢复。")
+        archive_confirmed = st.checkbox(
+            "我确认暂时归档当前项目",
+            key=f"archive_confirmed_{project_id}",
+        )
+        if st.button(
+            "归档当前项目",
+            disabled=not archive_confirmed,
+            key=f"archive_project_{project_id}",
+        ):
+            try:
+                archive_project_workspace(db, project_id)
+            except ValueError as exc:
+                st.error(str(exc))
+            except Exception as exc:
+                st.error(f"归档项目失败：{exc}")
+            else:
+                demo_project = db.get_project_by_name(
+                    DEMO_PROJECT_NAME
+                )
+                if demo_project is None:
+                    st.error("归档成功，但未找到可切换的内置项目。")
+                else:
+                    activate_project(st.session_state, int(demo_project["id"]))
+                    st.success("项目已归档。")
+                    st.rerun()
+
+archived_projects = db.list_archived_projects()
+if archived_projects:
+    with st.expander(f"已归档项目（{len(archived_projects)}）"):
+        st.caption("恢复后可继续编辑；永久删除要求输入完整项目名称，且不可撤销。")
+        for archived_project in archived_projects:
+            archived_id = int(archived_project["id"])
+            st.markdown(f"#### {archived_project['name']}")
+            st.caption(archived_project.get("description") or "尚未填写项目说明。")
+            restore_col, delete_col = st.columns([1, 2])
+            with restore_col:
+                if st.button(
+                    "恢复项目",
+                    key=f"restore_project_{archived_id}",
+                    width="stretch",
+                ):
+                    try:
+                        restore_project_workspace(db, archived_id)
+                    except ValueError as exc:
+                        st.error(str(exc))
+                    except Exception as exc:
+                        st.error(f"恢复项目失败：{exc}")
+                    else:
+                        activate_project(st.session_state, archived_id)
+                        st.success("项目已恢复。")
+                        st.rerun()
+            with delete_col:
+                with st.form(f"delete_project_{archived_id}"):
+                    delete_confirmation = st.text_input(
+                        "输入完整项目名称以永久删除",
+                        key=f"delete_name_{archived_id}",
+                    )
+                    delete_acknowledged = st.checkbox(
+                        "我理解数据库记录和本地材料文件将被永久删除",
+                        key=f"delete_ack_{archived_id}",
+                    )
+                    delete_submitted = st.form_submit_button(
+                        "永久删除",
+                    )
+                if delete_submitted:
+                    if not delete_acknowledged:
+                        st.error("请先确认理解永久删除的影响。")
+                    else:
+                        try:
+                            deletion = delete_project_workspace(
+                                db, archived_id, delete_confirmation
+                            )
+                        except ValueError as exc:
+                            st.error(str(exc))
+                        except Exception as exc:
+                            st.error(f"删除项目失败：{exc}")
+                        else:
+                            st.success(
+                                f"项目已永久删除，同时移除 "
+                                f"{deletion.removed_files} 个本地材料文件。"
+                            )
+                            for warning in deletion.warnings:
+                                st.warning(warning)
+                            st.rerun()
+            st.divider()
 
 st.markdown(f"### {project['name']}")
 st.caption(project.get("description") or "尚未填写项目说明。")

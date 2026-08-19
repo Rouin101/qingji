@@ -36,8 +36,7 @@ from .models import (
 )
 from .privacy import redact_text
 
-#: Local text for materials imported through the UI.  The page blocks real data,
-#: so every workflow import is expected to be explicitly fictional test data.
+#: Explicit note attached only when an imported material is marked fictional.
 _FICTION_NOTE = "虚构测试数据：用户导入，仅用于青迹功能演示，不对应真实个人或调研结论。"
 
 _TASK_RECOMMENDATION = (
