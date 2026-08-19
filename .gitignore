@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Local configuration and secrets
+.env
+
+# Runtime data
+data/raw/*
+data/redacted/*
+data/*.db
+data/*.db-*
+data/*.jsonl
+!data/raw/.gitkeep
+!data/redacted/.gitkeep
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
