@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 from qingji.db import Database
-from qingji.demo import create_demo_project
+from qingji.demo import add_demo_supplement, create_demo_project
 from qingji.retrieval_eval import evaluate_retrieval
 from qingji.workflow import check_and_store_claim, import_text_material
 
@@ -73,11 +73,32 @@ class RetrievalDiagnosticTests(unittest.TestCase):
 
     def test_demo_retrieval_regression_hits_every_expected_card(self) -> None:
         project_id = create_demo_project(self.db)
+        add_demo_supplement(self.db, project_id)
         report = evaluate_retrieval(self.db, project_id, top_k=3)
 
-        self.assertEqual(report["case_count"], 3)
-        self.assertEqual(report["hit_count"], 3)
-        self.assertEqual(report["hit_rate"], 1.0)
+        self.assertEqual(report["case_count"], 6)
+        self.assertEqual(report["passed_count"], 6)
+        self.assertEqual(report["pass_rate"], 1.0)
+        self.assertEqual(
+            set(report["categories"]),
+            {"direct", "paraphrase", "zero_hit", "conflict"},
+        )
+        zero_hit = next(
+            item for item in report["results"] if item["category"] == "zero_hit"
+        )
+        self.assertTrue(zero_hit["passed"])
+        self.assertEqual(zero_hit["relevant_count"], 0)
+        conflict = next(
+            item for item in report["results"] if item["category"] == "conflict"
+        )
+        self.assertTrue(conflict["passed"])
+        self.assertEqual(len(conflict["expected_ranks"]), 2)
+        self.assertTrue(all(conflict["expected_ranks"].values()))
+
+    def test_retrieval_regression_rejects_invalid_top_k(self) -> None:
+        project_id = create_demo_project(self.db)
+        with self.assertRaisesRegex(ValueError, "正整数"):
+            evaluate_retrieval(self.db, project_id, top_k=0)
 
 
 if __name__ == "__main__":

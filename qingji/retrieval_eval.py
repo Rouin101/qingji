@@ -1,10 +1,11 @@
-"""Small, deterministic retrieval regression set for Qingji's demo corpus."""
+"""Deterministic retrieval regression cases for Qingji's demo corpus."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
 
+from .diagnostics import RELEVANCE_THRESHOLD
 from .retrieval import (
     evidence_candidate_from_mapping,
     rank_evidence_with_explanations,
@@ -14,25 +15,51 @@ from .retrieval import (
 @dataclass(frozen=True)
 class RetrievalEvalCase:
     name: str
+    category: str
     query: str
-    expected_title_fragment: str
+    expected_title_fragments: tuple[str, ...] = ()
+    expect_no_relevant: bool = False
 
 
 DEFAULT_RETRIEVAL_CASES = (
     RetrievalEvalCase(
         "验证码求助",
+        "direct",
         "第一次使用平台时找不到验证码位置，需要志愿者帮助。",
-        "首次使用时需要协助",
+        ("首次使用时需要协助",),
     ),
     RetrievalEvalCase(
         "小样本观察",
+        "direct",
         "六名办事者中有人询问登录步骤，也有人独立完成流程。",
-        "6名模拟办事者中的求助情况",
+        ("6名模拟办事者中的求助情况",),
     ),
     RetrievalEvalCase(
         "工作人员咨询",
+        "direct",
         "工作人员收到登录咨询，但还没有分类统计。",
-        "登录咨询存在但未形成分类统计",
+        ("登录咨询存在但未形成分类统计",),
+    ),
+    RetrievalEvalCase(
+        "同义改写求助",
+        "paraphrase",
+        "网上办事系统不太会用，需要人工协助才能完成申请。",
+        ("首次使用时需要协助",),
+    ),
+    RetrievalEvalCase(
+        "无关主题零命中",
+        "zero_hit",
+        "校园宿舍空调维修进度与夜间噪声情况。",
+        expect_no_relevant=True,
+    ),
+    RetrievalEvalCase(
+        "正反体验同时召回",
+        "conflict",
+        "线上平台有人操作时需要帮助，也有人使用顺利没有遇到困难。",
+        (
+            "首次使用时需要协助",
+            "熟悉线上服务者可独立完成",
+        ),
     ),
 )
 
@@ -44,7 +71,7 @@ def evaluate_retrieval(
     top_k: int = 3,
     cases: tuple[RetrievalEvalCase, ...] = DEFAULT_RETRIEVAL_CASES,
 ) -> dict[str, Any]:
-    """Measure whether each expected demo card appears within the top-k."""
+    """Evaluate positive recall and explicit zero-hit behavior at top-k."""
 
     if top_k <= 0:
         raise ValueError("top_k 必须为正整数。")
@@ -58,30 +85,73 @@ def evaluate_retrieval(
         matches = rank_evidence_with_explanations(
             case.query, candidates, limit=top_k
         )
-        matched_titles = [match.candidate.title for match in matches]
-        hit_rank = next(
-            (
-                index
-                for index, title in enumerate(matched_titles, start=1)
-                if case.expected_title_fragment in title
-            ),
-            None,
-        )
+        relevant_matches = [
+            match for match in matches if match.score >= RELEVANCE_THRESHOLD
+        ]
+        relevant_titles = [
+            match.candidate.title for match in relevant_matches
+        ]
+        expected_ranks = {
+            fragment: next(
+                (
+                    index
+                    for index, title in enumerate(relevant_titles, start=1)
+                    if fragment in title
+                ),
+                None,
+            )
+            for fragment in case.expected_title_fragments
+        }
+        if case.expect_no_relevant:
+            passed = not relevant_matches
+        else:
+            passed = bool(expected_ranks) and all(
+                rank is not None for rank in expected_ranks.values()
+            )
+        hit_ranks = [
+            rank for rank in expected_ranks.values() if rank is not None
+        ]
         results.append(
             {
                 "name": case.name,
+                "category": case.category,
                 "query": case.query,
-                "expected_title_fragment": case.expected_title_fragment,
-                "hit": hit_rank is not None,
-                "hit_rank": hit_rank,
-                "top_titles": matched_titles,
+                "expected_title_fragments": list(
+                    case.expected_title_fragments
+                ),
+                "expect_no_relevant": case.expect_no_relevant,
+                "passed": passed,
+                "hit": passed,
+                "hit_rank": min(hit_ranks) if hit_ranks else None,
+                "expected_ranks": expected_ranks,
+                "relevant_count": len(relevant_matches),
+                "relevant_titles": relevant_titles,
+                "top_titles": [match.candidate.title for match in matches],
+                "top_scores": [round(float(match.score), 4) for match in matches],
             }
         )
-    hit_count = sum(bool(item["hit"]) for item in results)
+
+    categories: dict[str, dict[str, Any]] = {}
+    for result in results:
+        summary = categories.setdefault(
+            result["category"], {"case_count": 0, "passed_count": 0}
+        )
+        summary["case_count"] += 1
+        summary["passed_count"] += int(result["passed"])
+    for summary in categories.values():
+        summary["pass_rate"] = (
+            summary["passed_count"] / summary["case_count"]
+        )
+
+    passed_count = sum(bool(item["passed"]) for item in results)
     return {
         "top_k": top_k,
+        "relevance_threshold": RELEVANCE_THRESHOLD,
         "case_count": len(results),
-        "hit_count": hit_count,
-        "hit_rate": hit_count / len(results) if results else 0.0,
+        "passed_count": passed_count,
+        "pass_rate": passed_count / len(results) if results else 0.0,
+        "hit_count": passed_count,
+        "hit_rate": passed_count / len(results) if results else 0.0,
+        "categories": categories,
         "results": results,
     }
