@@ -63,7 +63,7 @@ with tab_import:
             uploaded_error = "文件不是 UTF-8 编码，请转换编码后重试。"
             st.error(uploaded_error)
 
-    with st.form("material_import_form", clear_on_submit=False):
+    with st.form("material_import_form", clear_on_submit=True):
         initial_text = uploaded_text or st.session_state.get(
             "material_draft_text", ""
         )

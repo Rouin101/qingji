@@ -248,6 +248,11 @@ def render_demo_banner() -> None:
 
 def render_sidebar_note() -> None:
     with st.sidebar:
+        st.page_link("app.py", label="项目概览")
+        st.page_link("pages/1_材料与证据.py", label="材料与证据")
+        st.page_link("pages/2_结论核验.py", label="结论核验")
+        st.page_link("pages/3_成果与缺口.py", label="成果与缺口")
+        st.divider()
         st.markdown("### 青迹")
         st.caption("让实践有迹可循，让结论有据可查。")
         st.info("演示库内全部是虚构测试数据。真实材料须先获授权，并在本地确认脱敏。")
