@@ -277,6 +277,8 @@ class Database:
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             project_id INTEGER
                 REFERENCES projects(id) ON DELETE CASCADE,
+            claim_id INTEGER
+                REFERENCES claims(id) ON DELETE CASCADE,
             run_type TEXT NOT NULL,
             status TEXT NOT NULL,
             input_json TEXT NOT NULL DEFAULT '{}',
@@ -297,6 +299,18 @@ class Database:
                 connection.execute(
                     "ALTER TABLE projects ADD COLUMN archived_at TEXT"
                 )
+            agent_run_columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(agent_runs)")
+            }
+            if "claim_id" not in agent_run_columns:
+                connection.execute(
+                    "ALTER TABLE agent_runs ADD COLUMN claim_id INTEGER"
+                )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_agent_runs_claim_type "
+                "ON agent_runs(claim_id, run_type, id DESC)"
+            )
             self.search_backend = self._initialize_search(connection)
 
     def _initialize_search(self, connection: sqlite3.Connection) -> str:
@@ -1125,6 +1139,54 @@ class Database:
 
     def delete_followup_task(self, task_id: int) -> bool:
         return self._delete("followup_tasks", task_id)
+
+    # Explainable workflow runs
+    def create_agent_run(
+        self,
+        project_id: int,
+        run_type: str,
+        *,
+        claim_id: int | None = None,
+        status: str = "completed",
+        input_data: Mapping[str, Any] | None = None,
+        output_data: Mapping[str, Any] | None = None,
+        error_message: str = "",
+        finished_at: str | None = None,
+    ) -> int:
+        now = _utc_now()
+        with self.connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO agent_runs(
+                    project_id, claim_id, run_type, status, input_json,
+                    output_json, error_message, created_at, finished_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    project_id,
+                    claim_id,
+                    run_type,
+                    status,
+                    _json(input_data, {}),
+                    _json(output_data, {}),
+                    error_message,
+                    now,
+                    finished_at or (now if status == "completed" else None),
+                ),
+            )
+        return int(cursor.lastrowid)
+
+    def get_latest_claim_run(
+        self, claim_id: int, run_type: str
+    ) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM agent_runs "
+                "WHERE claim_id = ? AND run_type = ? "
+                "ORDER BY id DESC LIMIT 1",
+                (claim_id, run_type),
+            ).fetchone()
+        return self._row(row)
 
     # Dashboard/statistics
     def get_project_stats(self, project_id: int) -> dict[str, int]:

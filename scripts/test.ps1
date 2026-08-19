@@ -9,3 +9,4 @@ if (-not (Test-Path -LiteralPath $projectPython)) {
 & $projectPython -m unittest discover -s tests -v
 & $projectPython -m compileall -q app.py qingji pages scripts tests
 & $projectPython scripts\e2e_apptest.py
+& $projectPython scripts\eval_retrieval.py

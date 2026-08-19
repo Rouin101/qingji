@@ -31,6 +31,14 @@ RULE_FLAG_LABELS = {
     "causal_language": "因果表达",
     "precise_quantity": "精确数量",
 }
+RETRIEVAL_DECISION_LABELS = {
+    "support": "用于支持",
+    "contradict": "用于冲突",
+    "context": "作为背景",
+    "below_threshold": "低于相关阈值",
+    "outside_top_k": "超出前 8 名",
+    "not_cited": "相关但未引用",
+}
 
 
 configure_page("结论核验", "🔎")
@@ -227,6 +235,80 @@ else:
                 st.markdown(evidence_card_html(card), unsafe_allow_html=True)
             if link.get("rationale"):
                 st.caption(f"关联说明：{link['rationale']}")
+
+st.markdown("### 检索诊断")
+retrieval_run = db.get_latest_claim_run(
+    int(active_claim_id), "claim_retrieval"
+)
+if retrieval_run is None:
+    st.info("这条结论还没有检索诊断记录。重新核验后即可查看候选排序和排除原因。")
+else:
+    diagnostic = retrieval_run.get("output") or {}
+    diagnostic_columns = st.columns(4)
+    diagnostic_columns[0].metric(
+        "可检索证据", diagnostic.get("eligible_count", 0)
+    )
+    diagnostic_columns[1].metric(
+        "达到相关阈值", diagnostic.get("relevant_count", 0)
+    )
+    diagnostic_columns[2].metric(
+        "最终引用", diagnostic.get("cited_count", 0)
+    )
+    diagnostic_columns[3].metric(
+        "被规则排除",
+        diagnostic.get("excluded_evidence_count", 0)
+        + diagnostic.get("excluded_material_count", 0),
+    )
+    keywords = diagnostic.get("query_keywords") or []
+    st.caption(
+        "检索方式：本地关键词与中文字符片段排序；"
+        f"相关阈值 {diagnostic.get('relevance_threshold', 0.08):.2f}；"
+        f"最多进入核验 {diagnostic.get('max_evaluation_candidates', 8)} 条。"
+    )
+    st.markdown(
+        "**识别到的关键词：** "
+        + ("、".join(keywords) if keywords else "没有命中预设关键词，主要使用字符片段")
+    )
+
+    with st.expander("查看候选排序与命中依据"):
+        ranked_rows = []
+        for item in diagnostic.get("ranked_candidates") or []:
+            ranked_rows.append(
+                {
+                    "排名": item.get("rank"),
+                    "证据": f"E{item.get('evidence_id')} · {item.get('title', '')}",
+                    "相关分": f"{float(item.get('score', 0)):.3f}",
+                    "处理结果": RETRIEVAL_DECISION_LABELS.get(
+                        item.get("decision"), item.get("decision", "—")
+                    ),
+                    "命中依据": item.get("explanation") or "未发现直接词面重合",
+                    "来源定位": item.get("source_locator") or "—",
+                }
+            )
+        if ranked_rows:
+            st.caption(
+                f"当前共有 {len(ranked_rows)} 条候选排序记录；"
+                "表格展示相关分、处理结果、命中依据和来源定位。"
+            )
+            st.dataframe(ranked_rows, width="stretch", hide_index=True)
+        else:
+            empty_state("当前没有符合授权和审核要求的可检索证据。")
+
+    exclusions = (diagnostic.get("excluded_evidence") or []) + (
+        diagnostic.get("excluded_materials") or []
+    )
+    if exclusions:
+        with st.expander("查看未进入检索的材料与证据"):
+            for item in diagnostic.get("excluded_evidence") or []:
+                st.markdown(
+                    f"- **E{item.get('evidence_id')} · {item.get('title', '')}**："
+                    + "；".join(item.get("reasons") or [])
+                )
+            for item in diagnostic.get("excluded_materials") or []:
+                st.markdown(
+                    f"- **M{item.get('material_id')} · {item.get('name', '')}**："
+                    f"{item.get('reason', '未进入检索')}"
+                )
 
 st.markdown("### 仍缺少什么")
 missing = claim.get("missing_evidence") or []

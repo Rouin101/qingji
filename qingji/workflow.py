@@ -24,17 +24,17 @@ from pathlib import Path
 from typing import Any
 
 from .claims import evaluate_claim, validate_citation_ids
+from .diagnostics import build_retrieval_diagnostic
 from .evidence import generate_evidence_drafts, split_text
 from .models import (
     ClaimEvaluation,
     ConsentStatus,
     EvidenceCandidate,
-    EvidenceType,
     MaterialImportResult,
-    ReviewStatus,
     TaskStatus,
 )
 from .privacy import redact_text
+from .retrieval import evidence_candidate_from_mapping
 
 #: Explicit note attached only when an imported material is marked fictional.
 _FICTION_NOTE = "虚构测试数据：用户导入，仅用于青迹功能演示，不对应真实个人或调研结论。"
@@ -53,6 +53,7 @@ class StoredClaimResult:
 
     claim_id: int
     evaluation: ClaimEvaluation
+    diagnostic: dict[str, Any]
 
 
 def _status_value(value: Any) -> str:
@@ -179,34 +180,20 @@ def import_text_material(
     )
 
 
-def _row_to_candidate(row: dict[str, Any]) -> EvidenceCandidate:
-    return EvidenceCandidate(
-        id=int(row["id"]),
-        material_id=int(row["material_id"]),
-        segment_id=int(row["segment_id"]),
-        title=row.get("title", ""),
-        quote=row.get("quote", ""),
-        summary=row.get("summary", ""),
-        evidence_type=EvidenceType(row["evidence_type"])
-        if row.get("evidence_type")
-        else EvidenceType.TEAM_ANALYSIS,
-        source_role=row.get("source_role", ""),
-        context=row.get("context", ""),
-        source_locator=row.get("source_locator") or row.get("segment_locator") or "",
-        review_status=ReviewStatus(row["review_status"])
-        if row.get("review_status")
-        else ReviewStatus.DRAFT,
-        consent_status=ConsentStatus(row["consent_status"])
-        if row.get("consent_status")
-        else ConsentStatus.UNKNOWN,
-    )
-
-
-def _load_approved_candidates(db: Any, project_id: int) -> list[EvidenceCandidate]:
+def _load_approved_candidates(
+    db: Any,
+    project_id: int,
+    evidence_rows: list[dict[str, Any]] | None = None,
+) -> list[EvidenceCandidate]:
     """Return evidence that is both manually approved and authorized."""
+
+    rows = evidence_rows
+    if rows is None:
+        rows = db.list_evidence_cards(project_id, review_status="approved")
     return [
-        _row_to_candidate(row)
-        for row in db.list_evidence_cards(project_id, review_status="approved")
+        evidence_candidate_from_mapping(row)
+        for row in rows
+        if _status_value(row.get("review_status")) == "approved"
         if _status_value(row.get("consent_status")) == ConsentStatus.CONFIRMED.value
     ]
 
@@ -290,8 +277,16 @@ def _store_evaluation(
     claim_text: str,
     claim_id: int | None,
 ) -> StoredClaimResult:
-    candidates = _load_approved_candidates(db, project_id)
+    evidence_rows = db.list_evidence_cards(project_id)
+    material_rows = db.list_materials(project_id)
+    candidates = _load_approved_candidates(db, project_id, evidence_rows)
     evaluation = evaluate_claim(claim_text, candidates, max_candidates=8)
+    diagnostic = build_retrieval_diagnostic(
+        claim_text,
+        evidence_rows,
+        material_rows,
+        evaluation,
+    )
 
     # Final back-end citation validation: an ID outside this candidate set can
     # never be persisted, even if future relation logic regresses.
@@ -333,7 +328,18 @@ def _store_evaluation(
     _create_idempotent_followup_tasks(
         db, claim_id, evaluation.missing_evidence
     )
-    return StoredClaimResult(claim_id=int(claim_id), evaluation=evaluation)
+    db.create_agent_run(
+        project_id,
+        "claim_retrieval",
+        claim_id=int(claim_id),
+        input_data={"claim_text": claim_text},
+        output_data=diagnostic,
+    )
+    return StoredClaimResult(
+        claim_id=int(claim_id),
+        evaluation=evaluation,
+        diagnostic=diagnostic,
+    )
 
 
 def check_and_store_claim(

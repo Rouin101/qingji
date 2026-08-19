@@ -58,6 +58,15 @@ class DatabaseTestCase(unittest.TestCase):
                 "description TEXT NOT NULL DEFAULT '', "
                 "created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
             )
+            connection.execute(
+                "CREATE TABLE agent_runs ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "project_id INTEGER, run_type TEXT NOT NULL, "
+                "status TEXT NOT NULL, input_json TEXT NOT NULL DEFAULT '{}', "
+                "output_json TEXT NOT NULL DEFAULT '{}', "
+                "error_message TEXT NOT NULL DEFAULT '', "
+                "created_at TEXT NOT NULL, finished_at TEXT)"
+            )
         legacy_db = Database(legacy_path)
         legacy_db.initialize()
         with sqlite3.connect(legacy_path) as connection:
@@ -66,6 +75,12 @@ class DatabaseTestCase(unittest.TestCase):
                 for row in connection.execute("PRAGMA table_info(projects)")
             }
         self.assertIn("archived_at", columns)
+        with sqlite3.connect(legacy_path) as connection:
+            agent_run_columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info(agent_runs)")
+            }
+        self.assertIn("claim_id", agent_run_columns)
 
     def test_crud_search_stats_and_cascade(self) -> None:
         project_id = self.db.create_project("测试项目", "仅供测试")

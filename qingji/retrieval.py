@@ -5,8 +5,14 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass, replace
+from typing import Any, Mapping
 
-from .models import ConsentStatus, EvidenceCandidate, ReviewStatus
+from .models import (
+    ConsentStatus,
+    EvidenceCandidate,
+    EvidenceType,
+    ReviewStatus,
+)
 
 
 _SEMANTIC_REPLACEMENTS: tuple[tuple[str, str], ...] = (
@@ -118,6 +124,41 @@ def extract_keywords(text: str) -> set[str]:
 
 def _status_value(value: object) -> str:
     return getattr(value, "value", value) if value is not None else ""
+
+
+def evidence_candidate_from_mapping(
+    row: Mapping[str, Any],
+) -> EvidenceCandidate:
+    """Convert one enriched evidence row into the shared retrieval type."""
+
+    return EvidenceCandidate(
+        id=int(row["id"]),
+        material_id=int(row["material_id"]),
+        segment_id=int(row["segment_id"]),
+        title=str(row.get("title", "")),
+        quote=str(row.get("quote", "")),
+        summary=str(row.get("summary", "")),
+        evidence_type=(
+            EvidenceType(row["evidence_type"])
+            if row.get("evidence_type")
+            else EvidenceType.TEAM_ANALYSIS
+        ),
+        source_role=str(row.get("source_role", "")),
+        context=str(row.get("context", "")),
+        source_locator=str(
+            row.get("source_locator") or row.get("segment_locator") or ""
+        ),
+        review_status=(
+            ReviewStatus(row["review_status"])
+            if row.get("review_status")
+            else ReviewStatus.DRAFT
+        ),
+        consent_status=(
+            ConsentStatus(row["consent_status"])
+            if row.get("consent_status")
+            else ConsentStatus.UNKNOWN
+        ),
+    )
 
 
 def is_retrievable(candidate: EvidenceCandidate) -> bool:
