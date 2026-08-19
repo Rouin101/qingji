@@ -893,17 +893,51 @@ class Database:
         return claim
 
     def list_claims(
-        self, project_id: int, *, verdict: str | None = None
+        self,
+        project_id: int,
+        *,
+        verdict: str | None = None,
+        query: str | None = None,
     ) -> list[dict[str, Any]]:
         sql = "SELECT * FROM claims WHERE project_id = ?"
         params: list[Any] = [project_id]
         if verdict is not None:
             sql += " AND verdict = ?"
             params.append(_value(verdict))
+        normalized_query = (query or "").strip()
+        if normalized_query:
+            escaped_query = (
+                normalized_query.replace("\\", "\\\\")
+                .replace("%", "\\%")
+                .replace("_", "\\_")
+            )
+            sql += " AND claim_text LIKE ? ESCAPE '\\'"
+            params.append(f"%{escaped_query}%")
         sql += " ORDER BY checked_at DESC, id DESC"
         with self.connect() as connection:
             rows = connection.execute(sql, params).fetchall()
         return self._rows(rows)
+
+    def get_claim_verdict_stats(self, project_id: int) -> dict[str, int]:
+        """Return a stable four-outcome distribution for one project."""
+
+        verdicts = (
+            "supported",
+            "partially_supported",
+            "unsupported",
+            "contradicted",
+        )
+        counts = {verdict: 0 for verdict in verdicts}
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT verdict, COUNT(*) AS count FROM claims "
+                "WHERE project_id = ? GROUP BY verdict",
+                (project_id,),
+            ).fetchall()
+        for row in rows:
+            if row["verdict"] in counts:
+                counts[row["verdict"]] = int(row["count"])
+        return counts
 
     def update_claim(
         self, claim_id: int, **changes: Any

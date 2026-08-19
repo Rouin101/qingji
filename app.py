@@ -209,6 +209,7 @@ st.caption(project.get("description") or "尚未填写项目说明。")
 
 try:
     stats = db.get_project_stats(project_id)
+    verdict_stats = db.get_claim_verdict_stats(project_id)
     claims = db.list_claims(project_id)
 except Exception as exc:
     st.error(f"读取项目数据失败：{exc}")
@@ -227,6 +228,14 @@ metric_columns[4].metric(
         else "—"
     ),
 )
+
+st.markdown("#### 结论状态分布")
+verdict_columns = st.columns(4)
+for column, verdict in zip(
+    verdict_columns,
+    ["supported", "partially_supported", "unsupported", "contradicted"],
+):
+    column.metric(VERDICT_LABELS[verdict], verdict_stats.get(verdict, 0))
 
 st.markdown("### 从这里开始")
 left, right = st.columns(2)

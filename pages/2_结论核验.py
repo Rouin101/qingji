@@ -12,6 +12,7 @@ from qingji.ui import (
     configure_page,
     empty_state,
     evidence_card_html,
+    format_datetime,
     get_demo_context,
     is_demo_project,
     render_demo_banner,
@@ -90,6 +91,81 @@ claims = db.list_claims(project_id)
 active_claim_id = st.session_state.get("active_claim_id")
 if active_claim_id is None and claims:
     active_claim_id = int(claims[0]["id"])
+
+if claims:
+    st.markdown("### 历史核验")
+    history_filter_col, history_search_col = st.columns([2, 3])
+    with history_filter_col:
+        history_verdict = st.segmented_control(
+            "核验状态",
+            options=[
+                "all",
+                "supported",
+                "partially_supported",
+                "unsupported",
+                "contradicted",
+            ],
+            default="all",
+            format_func=lambda item: (
+                "全部" if item == "all" else VERDICT_LABELS[item]
+            ),
+            key=f"claim_history_verdict_{project_id}",
+        )
+    with history_search_col:
+        history_query = st.text_input(
+            "搜索历史结论",
+            placeholder="输入结论中的关键词",
+            key=f"claim_history_query_{project_id}",
+        )
+
+    history_claims = db.list_claims(
+        project_id,
+        verdict=None if history_verdict == "all" else history_verdict,
+        query=history_query,
+    )
+    if not history_claims:
+        empty_state("当前筛选条件下没有历史结论。")
+    else:
+        history_ids = [int(item["id"]) for item in history_claims]
+        preferred_claim_id = (
+            int(active_claim_id)
+            if active_claim_id is not None
+            and int(active_claim_id) in history_ids
+            else history_ids[0]
+        )
+        selection_key = f"claim_history_selection_{project_id}"
+        if (
+            st.session_state.get(selection_key) not in history_ids
+            or submitted
+        ):
+            st.session_state[selection_key] = preferred_claim_id
+        selected_claim_id = st.selectbox(
+            "选择一条历史结论",
+            options=history_ids,
+            format_func=lambda item: next(
+                (
+                    f"C{claim['id']} · "
+                    f"{VERDICT_LABELS.get(claim.get('verdict'), '未知')} · "
+                    f"{claim.get('claim_text', '')[:70]}"
+                    for claim in history_claims
+                    if int(claim["id"]) == int(item)
+                ),
+                f"C{item}",
+            ),
+            key=selection_key,
+        )
+        active_claim_id = int(selected_claim_id)
+        st.session_state["active_claim_id"] = active_claim_id
+        selected_summary = next(
+            item
+            for item in history_claims
+            if int(item["id"]) == active_claim_id
+        )
+        st.caption(
+            f"当前显示 C{active_claim_id} · "
+            f"核验时间 {format_datetime(selected_summary.get('checked_at'))} · "
+            f"筛选结果 {len(history_claims)} 条"
+        )
 
 if active_claim_id is None:
     empty_state("还没有核验记录。输入上方示例结论即可开始。")

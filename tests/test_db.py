@@ -155,6 +155,48 @@ class DatabaseTestCase(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.db.link_claim_evidence(claim_id, card_id, "support")
 
+    def test_claim_history_filters_search_and_stats(self) -> None:
+        project_id = self.db.create_project("结论历史测试")
+        supported_id = self.db.create_claim(
+            project_id,
+            "材料显示服务完成率达到 80%。",
+            verdict="supported",
+        )
+        unsupported_id = self.db.create_claim(
+            project_id,
+            "所有受访者都认为流程简单。",
+            verdict="unsupported",
+        )
+        contradicted_id = self.db.create_claim(
+            project_id,
+            "受访者一致认为流程困难。",
+            verdict="contradicted",
+        )
+
+        unsupported = self.db.list_claims(
+            project_id, verdict="unsupported"
+        )
+        self.assertEqual([item["id"] for item in unsupported], [unsupported_id])
+        literal_percent = self.db.list_claims(project_id, query="80%")
+        self.assertEqual(
+            [item["id"] for item in literal_percent], [supported_id]
+        )
+        keyword = self.db.list_claims(project_id, query="流程")
+        self.assertEqual(
+            {item["id"] for item in keyword},
+            {unsupported_id, contradicted_id},
+        )
+
+        self.assertEqual(
+            self.db.get_claim_verdict_stats(project_id),
+            {
+                "supported": 1,
+                "partially_supported": 0,
+                "unsupported": 1,
+                "contradicted": 1,
+            },
+        )
+
     def test_demo_seed_and_supplement_are_idempotent(self) -> None:
         first_project_id = create_demo_project(self.db)
         second_project_id = create_demo_project(self.db)

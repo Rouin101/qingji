@@ -56,15 +56,50 @@ tab_claims, tab_tasks, tab_mapping, tab_export = st.tabs(
 
 with tab_claims:
     st.markdown("### 已核验结论")
-    if not claims:
-        empty_state("尚无核验结果。请先到“结论核验”页面检查一句话。")
-    for claim in claims:
+    claim_filter_col, claim_search_col = st.columns([2, 3])
+    with claim_filter_col:
+        claim_verdict_filter = st.segmented_control(
+            "核验状态",
+            options=[
+                "all",
+                "supported",
+                "partially_supported",
+                "unsupported",
+                "contradicted",
+            ],
+            default="all",
+            format_func=lambda item: (
+                "全部" if item == "all" else VERDICT_LABELS[item]
+            ),
+            key=f"output_claim_verdict_{project_id}",
+        )
+    with claim_search_col:
+        claim_query = st.text_input(
+            "搜索结论",
+            placeholder="输入结论中的关键词",
+            key=f"output_claim_query_{project_id}",
+        )
+    filtered_claims = db.list_claims(
+        project_id,
+        verdict=(
+            None if claim_verdict_filter == "all" else claim_verdict_filter
+        ),
+        query=claim_query,
+    )
+    st.caption(f"当前显示 {len(filtered_claims)} / {len(claims)} 条核验记录。")
+    if not filtered_claims:
+        empty_state(
+            "当前筛选条件下没有核验记录。"
+            if claims
+            else "尚无核验结果。请先到“结论核验”页面检查一句话。"
+        )
+    for claim in filtered_claims:
         verdict = claim.get("verdict", "unsupported")
         with st.expander(
             f"C{claim['id']} · {VERDICT_ICONS.get(verdict, '🔎')} "
             f"{VERDICT_LABELS.get(verdict, verdict)} · "
             f"{claim.get('claim_text', '未命名结论')}",
-            expanded=claim is claims[0],
+            expanded=claim is filtered_claims[0],
         ):
             st.markdown(f"**判断理由：** {claim.get('reason') or '—'}")
             st.markdown(
@@ -76,6 +111,13 @@ with tab_claims:
                 st.markdown("**未解决缺口**")
                 for item in missing:
                     st.markdown(f"- {item}")
+            if st.button(
+                "在结论核验中打开",
+                key=f"open_claim_{claim['id']}",
+            ):
+                st.session_state["active_claim_id"] = int(claim["id"])
+                st.session_state["claim_draft"] = claim.get("claim_text", "")
+                st.switch_page("pages/2_结论核验.py")
 
 with tab_tasks:
     st.markdown("### 补证任务")
