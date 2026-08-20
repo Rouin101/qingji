@@ -21,7 +21,7 @@ from qingji.ui import (
     render_page_intro,
     render_sidebar_note,
 )
-from qingji.workflow import import_text_material
+from qingji.workflow import import_text_material, review_evidence_card
 
 
 configure_page("材料与证据", "🗂️")
@@ -292,7 +292,8 @@ with tab_review:
                     st.error("证据标题和摘要不能为空。")
                 else:
                     try:
-                        db.update_evidence_card(
+                        review_result = review_evidence_card(
+                            db,
                             card_id,
                             title=edited_title.strip(),
                             summary=edited_summary.strip(),
@@ -302,7 +303,14 @@ with tab_review:
                     except Exception as exc:
                         st.error(f"保存审核结果失败：{exc}")
                     else:
-                        st.success(f"证据 E{card_id} 已更新。")
+                        refreshed_count = len(review_result.rechecked_claim_ids)
+                        if refreshed_count:
+                            st.success(
+                                f"证据 E{card_id} 已更新，并已重新核验当前项目的 "
+                                f"{refreshed_count} 条结论。"
+                            )
+                        else:
+                            st.success(f"证据 E{card_id} 已更新。")
                         st.rerun()
 
 with tab_materials:

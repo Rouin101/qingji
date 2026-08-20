@@ -5,7 +5,10 @@ from __future__ import annotations
 import streamlit as st
 
 from qingji.evaluation import (
+    build_eval_history_rows,
     build_eval_template,
+    export_eval_run_csv,
+    export_eval_run_markdown,
     parse_eval_csv,
     run_project_retrieval_eval,
 )
@@ -33,8 +36,8 @@ EVAL_CATEGORY_LABELS = {
 }
 
 
-def render_eval_report(report: dict) -> None:
-    st.markdown("#### 最近一次评测结果")
+def render_eval_report(report: dict, *, title: str = "评测结果") -> None:
+    st.markdown(f"#### {title}")
     summary_columns = st.columns(3)
     summary_columns[0].metric("用例数", report.get("case_count", 0))
     summary_columns[1].metric("通过数", report.get("passed_count", 0))
@@ -270,7 +273,7 @@ with tab_export:
         st.download_button(
             "下载 Markdown",
             data=markdown_output.encode("utf-8"),
-            file_name="青迹_虚构测试项目_可信导出.md",
+            file_name=f"青迹_项目{project_id}_可信导出.md",
             mime="text/markdown",
             type="primary",
             width="stretch",
@@ -326,7 +329,8 @@ with tab_eval:
         "上传填写后的评测 CSV",
         type=["csv"],
         key=f"retrieval_eval_upload_{project_id}",
-        help="文件必须为 UTF-8 编码，单次最多 100 个用例。",
+        help="文件必须为 UTF-8 编码、不超过 1 MiB，单次最多 100 个用例。",
+        max_upload_size=1,
     )
     top_k = st.slider(
         "候选范围 Top-K",
@@ -383,17 +387,122 @@ with tab_eval:
         except Exception as exc:
             st.error(f"检索评测运行失败：{exc}")
         else:
-            st.session_state[f"retrieval_eval_report_{project_id}"] = report
+            st.session_state[f"retrieval_eval_selection_{project_id}"] = int(
+                report["run_id"]
+            )
             st.success(
                 f"评测完成：{report['passed_count']}/"
                 f"{report['case_count']} 个用例通过。"
             )
 
-    current_report = st.session_state.get(
-        f"retrieval_eval_report_{project_id}"
-    )
-    if current_report is None:
-        latest_run = db.get_latest_project_run(project_id, "retrieval_eval")
-        current_report = latest_run.get("output") if latest_run else None
-    if current_report:
-        render_eval_report(current_report)
+    eval_runs = db.list_project_runs(project_id, "retrieval_eval", limit=50)
+    if not eval_runs:
+        empty_state("还没有检索评测记录。上传用例并运行后，结果会保存在当前项目。")
+    else:
+        st.markdown("#### 评测历史")
+        st.caption(
+            "通过率变化只在用例集、证据集、检索版本、Top-K 和相关阈值完全一致时比较；"
+            "不同配置的成绩不直接作升降判断。"
+        )
+        history_rows = build_eval_history_rows(eval_runs)
+        st.dataframe(
+            [
+                {
+                    "运行": f"R{row['run_id']}",
+                    "时间": format_datetime(row.get("created_at")),
+                    "用例集": row.get("case_set_id", "未记录"),
+                    "证据集": row.get("evidence_set_id", "未记录"),
+                    "检索版本": row.get("retrieval_version", "未记录"),
+                    "Top-K": row.get("top_k") or "—",
+                    "结果": (
+                        f"{row.get('passed_count', 0)}/"
+                        f"{row.get('case_count', 0)} "
+                        f"({float(row.get('pass_rate', 0)):.0%})"
+                    ),
+                    "分类": "；".join(
+                        f"{EVAL_CATEGORY_LABELS.get(name, name)} "
+                        f"{summary.get('passed_count', 0)}/"
+                        f"{summary.get('case_count', 0)}"
+                        for name, summary in row.get("categories", {}).items()
+                    )
+                    or "—",
+                    "与上次可比运行变化": (
+                        f"{float(row['pass_rate_delta']):+.0%}"
+                        f"（对比 R{row['comparable_to_run_id']}）"
+                        if row.get("pass_rate_delta") is not None
+                        else "—"
+                    ),
+                    "可比性": row.get("comparison_status", "—"),
+                }
+                for row in history_rows
+            ],
+            width="stretch",
+            hide_index=True,
+        )
+
+        run_ids = [int(run["id"]) for run in eval_runs]
+        selection_key = f"retrieval_eval_selection_{project_id}"
+        if st.session_state.get(selection_key) not in run_ids:
+            st.session_state[selection_key] = run_ids[0]
+        selected_run_id = st.selectbox(
+            "查看一次评测",
+            options=run_ids,
+            format_func=lambda item: next(
+                (
+                    f"R{row['run_id']} · {format_datetime(row.get('created_at'))} · "
+                    f"{row.get('passed_count', 0)}/{row.get('case_count', 0)} 通过"
+                    for row in history_rows
+                    if int(row["run_id"]) == int(item)
+                ),
+                f"R{item}",
+            ),
+            key=selection_key,
+        )
+        selected_run = next(
+            run for run in eval_runs if int(run["id"]) == int(selected_run_id)
+        )
+        selected_output = selected_run.get("output") or {}
+        render_eval_report(
+            selected_output,
+            title=f"评测运行 R{selected_run_id}",
+        )
+        selected_summary = next(
+            row
+            for row in history_rows
+            if int(row["run_id"]) == int(selected_run_id)
+        )
+        threshold_label = selected_summary.get("relevance_threshold")
+        if threshold_label is None:
+            threshold_label = "未记录"
+        st.caption(
+            f"用例集 {selected_summary.get('case_set_id', '未记录')} · "
+            f"证据集 {selected_summary.get('evidence_set_id', '未记录')} · "
+            f"检索版本 {selected_summary.get('retrieval_version', '未记录')} · "
+            f"Top-K {selected_summary.get('top_k') or '未记录'} · "
+            f"相关阈值 {threshold_label}"
+        )
+        export_columns = st.columns(2)
+        export_columns[0].download_button(
+            "下载本次结果 CSV",
+            data=export_eval_run_csv(selected_run),
+            file_name=(
+                f"青迹_项目{project_id}_检索评测_R{selected_run_id}.csv"
+            ),
+            mime="text/csv",
+            width="stretch",
+        )
+        export_columns[1].download_button(
+            "下载本次结果 Markdown",
+            data=export_eval_run_markdown(
+                selected_run, project.get("name", f"项目{project_id}")
+            ).encode("utf-8"),
+            file_name=(
+                f"青迹_项目{project_id}_检索评测_R{selected_run_id}.md"
+            ),
+            mime="text/markdown",
+            width="stretch",
+        )
+        st.warning(
+            "检索评测通过率不是事实正确率，也不是外部基准成绩；"
+            "它只反映当前项目中已授权、已审核证据集上的本地检索表现。"
+        )

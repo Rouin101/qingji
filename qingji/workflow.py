@@ -40,8 +40,8 @@ from .retrieval import evidence_candidate_from_mapping
 _FICTION_NOTE = "虚构测试数据：用户导入，仅用于青迹功能演示，不对应真实个人或调研结论。"
 
 _TASK_RECOMMENDATION = (
-    "优先补充已获得记录与使用授权的虚构测试材料，"
-    "并明确其来源角色、采集场景与采集日期。"
+    "优先补充已获得记录与使用授权的材料，并明确其来源角色、采集场景与采集日期。"
+    "如使用虚构测试材料，必须清楚标注且不得当作真实调研结论。"
 )
 
 _MAX_CLAIM_LENGTH = 500
@@ -54,6 +54,14 @@ class StoredClaimResult:
     claim_id: int
     evaluation: ClaimEvaluation
     diagnostic: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class EvidenceReviewResult:
+    """Evidence update plus the claims refreshed against the new evidence set."""
+
+    evidence_card: dict[str, Any]
+    rechecked_claim_ids: tuple[int, ...]
 
 
 def _status_value(value: Any) -> str:
@@ -247,26 +255,54 @@ def _task_title(missing_item: str) -> str:
     return title if len(title) <= 60 else title[:59] + "…"
 
 
-def _create_idempotent_followup_tasks(
+def _sync_followup_tasks(
     db: Any, claim_id: int, missing_evidence: list[str]
 ) -> list[str]:
-    """Create one open task per missing item, never reopening finished ones."""
-    existing_titles = {
-        task["title"]
-        for task in db.list_followup_tasks(claim_id=claim_id)
-        if _status_value(task.get("status")) != TaskStatus.CANCELLED.value
+    """Keep rule-generated ``补齐：`` tasks aligned with current gaps.
+
+    Manual tasks and cancelled tasks are left untouched.  A completed automatic
+    task is reopened when the same evidence gap returns, while an open automatic
+    task is completed once that gap is no longer present.
+    """
+
+    desired_titles = {_task_title(item) for item in missing_evidence}
+    existing_tasks = db.list_followup_tasks(claim_id=claim_id)
+    existing_by_title = {
+        task["title"]: task
+        for task in existing_tasks
+        if str(task.get("title", "")).startswith("补齐：")
     }
+
+    for title, task in existing_by_title.items():
+        status = _status_value(task.get("status"))
+        task_id = int(task["id"])
+        changes: dict[str, Any] = {}
+        if (
+            status != TaskStatus.CANCELLED.value
+            and task.get("recommended_action") != _TASK_RECOMMENDATION
+        ):
+            changes["recommended_action"] = _TASK_RECOMMENDATION
+        if title in desired_titles and status == TaskStatus.DONE.value:
+            changes.update(
+                status=TaskStatus.OPEN.value,
+                completion_material_id=None,
+            )
+        elif title not in desired_titles and status == TaskStatus.OPEN.value:
+            changes["status"] = TaskStatus.DONE.value
+        if changes:
+            db.update_followup_task(task_id, **changes)
+
     created: list[str] = []
     for item in missing_evidence:
         title = _task_title(item)
-        if title in existing_titles:
+        if title in existing_by_title:
             continue
         db.create_followup_task(
             claim_id,
             title,
             recommended_action=_TASK_RECOMMENDATION,
         )
-        existing_titles.add(title)
+        existing_by_title[title] = {"title": title, "status": TaskStatus.OPEN.value}
         created.append(title)
     return created
 
@@ -325,7 +361,7 @@ def _store_evaluation(
         )
 
     _replace_claim_links(db, claim_id, evaluation)
-    _create_idempotent_followup_tasks(
+    _sync_followup_tasks(
         db, claim_id, evaluation.missing_evidence
     )
     db.create_agent_run(
@@ -367,4 +403,63 @@ def recheck_claim(db: Any, claim_id: int) -> StoredClaimResult:
         int(claim["project_id"]),
         claim["claim_text"],
         claim_id=claim_id,
+    )
+
+
+def review_evidence_card(
+    db: Any,
+    evidence_card_id: int,
+    *,
+    title: str,
+    summary: str,
+    evidence_type: str,
+    review_status: str,
+) -> EvidenceReviewResult:
+    """Update one card and refresh every claim affected by the evidence set.
+
+    Claim verdicts are snapshots of the approved evidence available at check
+    time.  Approving, withdrawing, or editing an approved card can change
+    retrieval order and therefore any claim in the same project, including a
+    claim that did not previously cite this card.  The MVP keeps projects small,
+    so refreshing the whole project is the safest deterministic behaviour.
+    """
+
+    evidence_card_id = int(evidence_card_id)
+    current = db.get_evidence_card(evidence_card_id)
+    if current is None:
+        raise ValueError(f"证据 E{evidence_card_id} 不存在，无法保存审核结果。")
+
+    normalized_title = str(title or "").strip()
+    normalized_summary = str(summary or "").strip()
+    if not normalized_title or not normalized_summary:
+        raise ValueError("证据标题和摘要不能为空。")
+
+    changes = {
+        "title": normalized_title,
+        "summary": normalized_summary,
+        "evidence_type": _status_value(evidence_type),
+        "review_status": _status_value(review_status),
+    }
+    evidence_fields_changed = any(
+        _status_value(current.get(field)) != value
+        for field, value in changes.items()
+    )
+    old_status = _status_value(current.get("review_status"))
+    new_status = changes["review_status"]
+
+    updated = db.update_evidence_card(evidence_card_id, **changes)
+    if updated is None:
+        raise RuntimeError(f"证据 E{evidence_card_id} 保存失败。")
+
+    rechecked_claim_ids: list[int] = []
+    if evidence_fields_changed and "approved" in {old_status, new_status}:
+        project_id = int(updated["project_id"])
+        for claim in db.list_claims(project_id):
+            claim_id = int(claim["id"])
+            recheck_claim(db, claim_id)
+            rechecked_claim_ids.append(claim_id)
+
+    return EvidenceReviewResult(
+        evidence_card=updated,
+        rechecked_claim_ids=tuple(rechecked_claim_ids),
     )

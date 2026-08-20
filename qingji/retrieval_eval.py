@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from .diagnostics import RELEVANCE_THRESHOLD
+from .diagnostics import RELEVANCE_THRESHOLD, RETRIEVAL_DIAGNOSTIC_VERSION
 from .retrieval import (
     evidence_candidate_from_mapping,
     rank_evidence_with_explanations,
@@ -166,6 +166,7 @@ def evaluate_retrieval(
 
     passed_count = sum(bool(item["passed"]) for item in results)
     return {
+        "retrieval_version": RETRIEVAL_DIAGNOSTIC_VERSION,
         "top_k": top_k,
         "relevance_threshold": RELEVANCE_THRESHOLD,
         "case_count": len(results),

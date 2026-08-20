@@ -6,8 +6,12 @@ from collections.abc import Mapping
 from dataclasses import asdict, is_dataclass
 from datetime import date, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import streamlit as st
+
+
+_LOCAL_TIMEZONE = ZoneInfo("Asia/Shanghai")
 
 
 EVIDENCE_TYPE_LABELS = {
@@ -281,7 +285,7 @@ def render_sidebar_note(project: Mapping[str, Any] | None = None) -> None:
                 f"当前项目：{project.get('name', '未命名项目')}\n\n"
                 "项目切换与新建请返回“项目概览”。"
             )
-        st.caption("v0.7 · 单人开发版")
+        st.caption("v0.8 · 单人开发版")
 
 
 def row_to_dict(row: Any) -> dict[str, Any]:
@@ -318,11 +322,20 @@ def format_datetime(item: Any) -> str:
     if item in (None, ""):
         return "—"
     if isinstance(item, datetime):
-        return item.strftime("%Y-%m-%d %H:%M")
-    if isinstance(item, date):
+        parsed = item
+    elif isinstance(item, date):
         return item.strftime("%Y-%m-%d")
     text = str(item).replace("T", " ")
-    return text[:16] if len(text) >= 16 else text
+    if len(text) == 10:
+        return text
+    if not isinstance(item, datetime):
+        try:
+            parsed = datetime.fromisoformat(str(item).replace("Z", "+00:00"))
+        except ValueError:
+            return text[:16] if len(text) >= 16 else text
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(_LOCAL_TIMEZONE)
+    return parsed.strftime("%Y-%m-%d %H:%M")
 
 
 def verdict_box(verdict: Any, reason: str) -> None:

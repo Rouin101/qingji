@@ -47,7 +47,6 @@ class Database:
 
     PROJECT_FIELDS = {"name", "description", "archived_at", "updated_at"}
     MATERIAL_FIELDS = {
-        "project_id",
         "material_type",
         "original_filename",
         "raw_path",
@@ -62,7 +61,6 @@ class Database:
         "updated_at",
     }
     SEGMENT_FIELDS = {
-        "material_id",
         "sequence_no",
         "redacted_text",
         "start_ms",
@@ -72,8 +70,6 @@ class Database:
         "updated_at",
     }
     EVIDENCE_FIELDS = {
-        "project_id",
-        "segment_id",
         "evidence_type",
         "title",
         "quote",
@@ -83,7 +79,6 @@ class Database:
         "updated_at",
     }
     CLAIM_FIELDS = {
-        "project_id",
         "claim_text",
         "verdict",
         "reason",
@@ -94,7 +89,6 @@ class Database:
         "updated_at",
     }
     TASK_FIELDS = {
-        "claim_id",
         "title",
         "recommended_action",
         "status",
@@ -287,6 +281,8 @@ class Database:
             created_at TEXT NOT NULL,
             finished_at TEXT
         );
+        CREATE INDEX IF NOT EXISTS idx_agent_runs_project_type
+            ON agent_runs(project_id, run_type, id DESC);
         """
 
         with self.connect() as connection:
@@ -1061,6 +1057,9 @@ class Database:
     ) -> int:
         now = _utc_now()
         with self.connect() as connection:
+            self._validate_completion_material_project(
+                connection, claim_id, completion_material_id
+            )
             cursor = connection.execute(
                 """
                 INSERT INTO followup_tasks(
@@ -1121,9 +1120,44 @@ class Database:
     def update_followup_task(
         self, task_id: int, **changes: Any
     ) -> dict[str, Any] | None:
+        if "completion_material_id" in changes:
+            task = self.get_followup_task(task_id)
+            if task is not None:
+                with self.connect() as connection:
+                    self._validate_completion_material_project(
+                        connection,
+                        int(task["claim_id"]),
+                        changes["completion_material_id"],
+                    )
         return self._update(
             "followup_tasks", task_id, self.TASK_FIELDS, changes
         )
+
+    @staticmethod
+    def _validate_completion_material_project(
+        connection: sqlite3.Connection,
+        claim_id: int,
+        completion_material_id: int | None,
+    ) -> None:
+        if completion_material_id is None:
+            return
+        claim = connection.execute(
+            "SELECT project_id FROM claims WHERE id = ?", (claim_id,)
+        ).fetchone()
+        if claim is None:
+            raise ValueError(f"Claim {claim_id} does not exist")
+        material = connection.execute(
+            "SELECT project_id FROM materials WHERE id = ?",
+            (completion_material_id,),
+        ).fetchone()
+        if material is None:
+            raise ValueError(
+                f"Completion material {completion_material_id} does not exist"
+            )
+        if int(claim["project_id"]) != int(material["project_id"]):
+            raise ValueError(
+                "Follow-up task and completion material must share a project"
+            )
 
     def set_followup_task_status(
         self,
@@ -1155,6 +1189,16 @@ class Database:
     ) -> int:
         now = _utc_now()
         with self.connect() as connection:
+            if claim_id is not None:
+                claim = connection.execute(
+                    "SELECT project_id FROM claims WHERE id = ?", (claim_id,)
+                ).fetchone()
+                if claim is None:
+                    raise ValueError(f"Claim {claim_id} does not exist")
+                if int(claim["project_id"]) != int(project_id):
+                    raise ValueError(
+                        "Agent run and claim must share a project"
+                    )
             cursor = connection.execute(
                 """
                 INSERT INTO agent_runs(
@@ -1199,6 +1243,28 @@ class Database:
                 (project_id, run_type),
             ).fetchone()
         return self._row(row)
+
+    def list_project_runs(
+        self,
+        project_id: int,
+        run_type: str,
+        *,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Return newest-first workflow runs isolated to one project and type."""
+
+        if isinstance(limit, bool) or not isinstance(limit, int):
+            raise ValueError("limit must be an integer")
+        if limit < 1 or limit > 500:
+            raise ValueError("limit must be between 1 and 500")
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM agent_runs "
+                "WHERE project_id = ? AND run_type = ? "
+                "ORDER BY id DESC LIMIT ?",
+                (int(project_id), str(run_type), limit),
+            ).fetchall()
+        return self._rows(rows)
 
     # Dashboard/statistics
     def get_project_stats(self, project_id: int) -> dict[str, int]:

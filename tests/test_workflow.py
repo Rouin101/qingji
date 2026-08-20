@@ -15,10 +15,12 @@ from qingji.models import (
     Verdict,
 )
 from qingji.workflow import (
+    EvidenceReviewResult,
     StoredClaimResult,
     check_and_store_claim,
     import_text_material,
     recheck_claim,
+    review_evidence_card,
 )
 
 DIFFICULTY_TEXT = (
@@ -269,6 +271,114 @@ class WorkflowTestCase(unittest.TestCase):
         self.assertIn(f"C{stored.claim_id}", markdown)
         self.assertIn("已有支持", markdown)
         self.assertNotIn("13812345678", markdown)
+
+    def test_withdrawing_approved_evidence_refreshes_claim_and_export(self) -> None:
+        from qingji.export import export_project_markdown
+
+        imported = self._import(DIFFICULTY_TEXT)
+        stored = check_and_store_claim(self.db, self.project_id, SIMPLE_CLAIM)
+        card = self.db.get_evidence_card(imported.evidence_card_ids[0])
+        self.assertEqual(stored.evaluation.verdict, Verdict.SUPPORTED)
+
+        review = review_evidence_card(
+            self.db,
+            int(card["id"]),
+            title=card["title"],
+            summary=card["summary"],
+            evidence_type=card["evidence_type"],
+            review_status="rejected",
+        )
+
+        self.assertIsInstance(review, EvidenceReviewResult)
+        self.assertEqual(review.rechecked_claim_ids, (stored.claim_id,))
+        refreshed = self.db.get_claim(stored.claim_id)
+        self.assertEqual(refreshed["verdict"], Verdict.UNSUPPORTED.value)
+        self.assertEqual(refreshed["evidence_links"], [])
+        self.assertIsNotNone(
+            self.db.get_latest_claim_run(stored.claim_id, "claim_retrieval")
+        )
+        markdown = export_project_markdown(self.db, self.project_id)
+        self.assertNotIn("- 核验结果：已有支持", markdown)
+        self.assertIn("- 支持证据：无", markdown)
+
+    def test_approving_evidence_refreshes_only_its_project_claims(self) -> None:
+        stored = check_and_store_claim(self.db, self.project_id, SIMPLE_CLAIM)
+        initial_tasks = self.db.list_followup_tasks(claim_id=stored.claim_id)
+        self.assertTrue(initial_tasks)
+        self.assertTrue(all(task["status"] == "open" for task in initial_tasks))
+        other_project_id = self.db.create_project("另一个项目")
+        other = check_and_store_claim(self.db, other_project_id, SIMPLE_CLAIM)
+        other_run_before = self.db.get_latest_claim_run(
+            other.claim_id, "claim_retrieval"
+        )
+
+        imported = import_text_material(
+            self.db,
+            self.project_id,
+            DIFFICULTY_TEXT,
+            original_filename="待批准材料.txt",
+            source_role="模拟受访者（虚构）",
+            context="虚构访谈",
+            captured_at="2026-07-15T09:10:00+08:00",
+            consent_status=ConsentStatus.CONFIRMED,
+            custom_sensitive_terms=None,
+            is_fictional=True,
+        )
+        card = self.db.get_evidence_card(imported.evidence_card_ids[0])
+        review = review_evidence_card(
+            self.db,
+            int(card["id"]),
+            title=card["title"],
+            summary=card["summary"],
+            evidence_type=card["evidence_type"],
+            review_status="approved",
+        )
+
+        self.assertEqual(review.rechecked_claim_ids, (stored.claim_id,))
+        self.assertEqual(
+            self.db.get_claim(stored.claim_id)["verdict"], Verdict.SUPPORTED.value
+        )
+        resolved_tasks = self.db.list_followup_tasks(claim_id=stored.claim_id)
+        self.assertTrue(all(task["status"] == "done" for task in resolved_tasks))
+        self.assertEqual(
+            self.db.get_claim(other.claim_id)["verdict"], Verdict.UNSUPPORTED.value
+        )
+        self.assertEqual(
+            self.db.get_latest_claim_run(other.claim_id, "claim_retrieval")["id"],
+            other_run_before["id"],
+        )
+
+        withdrawn = review_evidence_card(
+            self.db,
+            int(card["id"]),
+            title=card["title"],
+            summary=card["summary"],
+            evidence_type=card["evidence_type"],
+            review_status="rejected",
+        )
+        self.assertEqual(withdrawn.rechecked_claim_ids, (stored.claim_id,))
+        reopened_tasks = self.db.list_followup_tasks(claim_id=stored.claim_id)
+        self.assertTrue(all(task["status"] == "open" for task in reopened_tasks))
+
+    def test_followup_recommendation_is_safe_for_real_projects(self) -> None:
+        stored = check_and_store_claim(self.db, self.project_id, SIMPLE_CLAIM)
+        tasks = self.db.list_followup_tasks(claim_id=stored.claim_id)
+        self.assertTrue(tasks)
+        for task in tasks:
+            recommendation = task["recommended_action"]
+            self.assertIn("已获得记录与使用授权的材料", recommendation)
+            self.assertNotIn("补充已获得记录与使用授权的虚构测试材料", recommendation)
+
+        legacy_recommendation = "优先补充已获得记录与使用授权的虚构测试材料。"
+        self.db.update_followup_task(
+            int(tasks[0]["id"]), recommended_action=legacy_recommendation
+        )
+        recheck_claim(self.db, stored.claim_id)
+        migrated = self.db.get_followup_task(int(tasks[0]["id"]))
+        self.assertIn(
+            "已获得记录与使用授权的材料", migrated["recommended_action"]
+        )
+        self.assertNotEqual(migrated["recommended_action"], legacy_recommendation)
 
     def test_team_analysis_alone_never_supports_claim(self) -> None:
         result = self._import(

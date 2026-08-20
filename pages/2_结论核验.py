@@ -57,6 +57,11 @@ render_page_intro(
 )
 render_demo_banner(project)
 demo_mode = is_demo_project(project)
+history_verdict_key = f"claim_history_verdict_{project_id}"
+history_query_key = f"claim_history_query_{project_id}"
+history_selection_key = f"claim_history_selection_{project_id}"
+if history_verdict_key not in st.session_state:
+    st.session_state[history_verdict_key] = "all"
 
 st.markdown("### 核验一句话")
 with st.form("claim_check_form"):
@@ -93,10 +98,23 @@ if submitted:
         else:
             st.session_state["active_claim_id"] = int(stored.claim_id)
             st.session_state["claim_draft"] = claim_text.strip()
+            st.session_state[history_verdict_key] = "all"
+            st.session_state[history_query_key] = ""
+            st.session_state[history_selection_key] = int(stored.claim_id)
             st.success("核验完成。请重点查看理由、证据范围和稳妥改写。")
 
 claims = db.list_claims(project_id)
 active_claim_id = st.session_state.get("active_claim_id")
+project_claim_ids = {int(item["id"]) for item in claims}
+try:
+    active_claim_id = (
+        int(active_claim_id) if active_claim_id is not None else None
+    )
+except (TypeError, ValueError):
+    active_claim_id = None
+if active_claim_id not in project_claim_ids:
+    active_claim_id = None
+    st.session_state.pop("active_claim_id", None)
 if active_claim_id is None and claims:
     active_claim_id = int(claims[0]["id"])
 
@@ -113,17 +131,16 @@ if claims:
                 "unsupported",
                 "contradicted",
             ],
-            default="all",
             format_func=lambda item: (
                 "全部" if item == "all" else VERDICT_LABELS[item]
             ),
-            key=f"claim_history_verdict_{project_id}",
+            key=history_verdict_key,
         )
     with history_search_col:
         history_query = st.text_input(
             "搜索历史结论",
             placeholder="输入结论中的关键词",
-            key=f"claim_history_query_{project_id}",
+            key=history_query_key,
         )
 
     history_claims = db.list_claims(
@@ -133,6 +150,7 @@ if claims:
     )
     if not history_claims:
         empty_state("当前筛选条件下没有历史结论。")
+        st.stop()
     else:
         history_ids = [int(item["id"]) for item in history_claims]
         preferred_claim_id = (
@@ -141,12 +159,11 @@ if claims:
             and int(active_claim_id) in history_ids
             else history_ids[0]
         )
-        selection_key = f"claim_history_selection_{project_id}"
         if (
-            st.session_state.get(selection_key) not in history_ids
+            st.session_state.get(history_selection_key) not in history_ids
             or submitted
         ):
-            st.session_state[selection_key] = preferred_claim_id
+            st.session_state[history_selection_key] = preferred_claim_id
         selected_claim_id = st.selectbox(
             "选择一条历史结论",
             options=history_ids,
@@ -160,7 +177,7 @@ if claims:
                 ),
                 f"C{item}",
             ),
-            key=selection_key,
+            key=history_selection_key,
         )
         active_claim_id = int(selected_claim_id)
         st.session_state["active_claim_id"] = active_claim_id

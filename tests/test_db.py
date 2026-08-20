@@ -170,6 +170,133 @@ class DatabaseTestCase(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.db.link_claim_evidence(claim_id, card_id, "support")
 
+    def test_update_apis_reject_parent_reassignment(self) -> None:
+        project_a = self.db.create_project("项目A")
+        project_b = self.db.create_project("项目B")
+        material_a = self.db.create_material(project_a, "text")
+        material_b = self.db.create_material(project_b, "text")
+        segment_a = self.db.create_segment(material_a, 1, "A")
+        segment_b = self.db.create_segment(material_b, 1, "B")
+        evidence_a = self.db.create_evidence_card(
+            project_a,
+            segment_a,
+            "field_observation",
+            "A",
+            "A",
+            "A",
+        )
+        claim_a = self.db.create_claim(project_a, "A")
+        claim_b = self.db.create_claim(project_b, "B")
+        task_a = self.db.create_followup_task(claim_a, "A")
+
+        attempts = {
+            "material.project_id": lambda: self.db.update_material(
+                material_a, project_id=project_b
+            ),
+            "segment.material_id": lambda: self.db.update_segment(
+                segment_a, material_id=material_b
+            ),
+            "evidence.project_id": lambda: self.db.update_evidence_card(
+                evidence_a, project_id=project_b
+            ),
+            "evidence.segment_id": lambda: self.db.update_evidence_card(
+                evidence_a, segment_id=segment_b
+            ),
+            "claim.project_id": lambda: self.db.update_claim(
+                claim_a, project_id=project_b
+            ),
+            "task.claim_id": lambda: self.db.update_followup_task(
+                task_a, claim_id=claim_b
+            ),
+        }
+        for field, attempt in attempts.items():
+            with self.subTest(field=field):
+                with self.assertRaises(ValueError):
+                    attempt()
+
+        self.assertEqual(self.db.get_material(material_a)["project_id"], project_a)
+        self.assertEqual(self.db.get_segment(segment_a)["material_id"], material_a)
+        evidence = self.db.get_evidence_card(evidence_a)
+        self.assertEqual(evidence["project_id"], project_a)
+        self.assertEqual(evidence["segment_id"], segment_a)
+        self.assertEqual(self.db.get_claim(claim_a)["project_id"], project_a)
+        self.assertEqual(self.db.get_followup_task(task_a)["claim_id"], claim_a)
+
+    def test_followup_completion_material_must_share_claim_project(self) -> None:
+        project_a = self.db.create_project("任务项目A")
+        project_b = self.db.create_project("任务项目B")
+        material_a = self.db.create_material(project_a, "text")
+        material_b = self.db.create_material(project_b, "text")
+        claim_a = self.db.create_claim(project_a, "A")
+
+        with self.assertRaises(ValueError):
+            self.db.create_followup_task(
+                claim_a, "跨项目完成", completion_material_id=material_b
+            )
+
+        task_id = self.db.create_followup_task(
+            claim_a, "同项目完成", completion_material_id=material_a
+        )
+        with self.assertRaises(ValueError):
+            self.db.set_followup_task_status(
+                task_id, "done", completion_material_id=material_b
+            )
+        task = self.db.get_followup_task(task_id)
+        self.assertEqual(task["status"], "open")
+        self.assertEqual(task["completion_material_id"], material_a)
+
+        updated = self.db.set_followup_task_status(
+            task_id, "done", completion_material_id=material_a
+        )
+        self.assertEqual(updated["status"], "done")
+        self.assertEqual(updated["completion_material_id"], material_a)
+
+    def test_agent_run_claim_must_share_project(self) -> None:
+        project_a = self.db.create_project("运行项目A")
+        project_b = self.db.create_project("运行项目B")
+        claim_a = self.db.create_claim(project_a, "A")
+
+        run_id = self.db.create_agent_run(
+            project_a, "claim_retrieval", claim_id=claim_a
+        )
+        self.assertEqual(
+            self.db.get_latest_claim_run(claim_a, "claim_retrieval")["id"],
+            run_id,
+        )
+        with self.assertRaises(ValueError):
+            self.db.create_agent_run(
+                project_b, "claim_retrieval", claim_id=claim_a
+            )
+        with self.assertRaises(ValueError):
+            self.db.create_agent_run(
+                project_a, "claim_retrieval", claim_id=999999
+            )
+
+    def test_project_run_history_is_ordered_filtered_and_limited(self) -> None:
+        project_a = self.db.create_project("历史项目A")
+        project_b = self.db.create_project("历史项目B")
+        first = self.db.create_agent_run(project_a, "retrieval_eval")
+        self.db.create_agent_run(project_a, "claim_retrieval")
+        second = self.db.create_agent_run(project_a, "retrieval_eval")
+        self.db.create_agent_run(project_b, "retrieval_eval")
+
+        history = self.db.list_project_runs(
+            project_a, "retrieval_eval", limit=10
+        )
+        self.assertEqual([run["id"] for run in history], [second, first])
+        self.assertEqual(
+            [run["id"] for run in self.db.list_project_runs(
+                project_a, "retrieval_eval", limit=1
+            )],
+            [second],
+        )
+        for invalid_limit in (0, 501, True, "2"):
+            with self.subTest(limit=invalid_limit):
+                with self.assertRaises(ValueError):
+                    self.db.list_project_runs(
+                        project_a, "retrieval_eval", limit=invalid_limit
+                    )
+
     def test_claim_history_filters_search_and_stats(self) -> None:
         project_id = self.db.create_project("结论历史测试")
         supported_id = self.db.create_claim(
