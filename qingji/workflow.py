@@ -62,6 +62,7 @@ class EvidenceReviewResult:
 
     evidence_card: dict[str, Any]
     rechecked_claim_ids: tuple[int, ...]
+    review_event_id: int | None
 
 
 def _status_value(value: Any) -> str:
@@ -414,6 +415,7 @@ def review_evidence_card(
     summary: str,
     evidence_type: str,
     review_status: str,
+    change_reason: str,
 ) -> EvidenceReviewResult:
     """Update one card and refresh every claim affected by the evidence set.
 
@@ -434,6 +436,10 @@ def review_evidence_card(
     if not normalized_title or not normalized_summary:
         raise ValueError("证据标题和摘要不能为空。")
 
+    normalized_reason = str(change_reason or "").strip()
+    if len(normalized_reason) > 500:
+        raise ValueError("证据审核说明不能超过 500 字。")
+
     changes = {
         "title": normalized_title,
         "summary": normalized_summary,
@@ -447,6 +453,20 @@ def review_evidence_card(
     old_status = _status_value(current.get("review_status"))
     new_status = changes["review_status"]
 
+    if not evidence_fields_changed:
+        return EvidenceReviewResult(
+            evidence_card=current,
+            rechecked_claim_ids=(),
+            review_event_id=None,
+        )
+    if not normalized_reason:
+        raise ValueError("请填写本次审核或修改的说明。")
+
+    before_snapshot = {
+        field: _status_value(current.get(field))
+        for field in changes
+    }
+
     updated = db.update_evidence_card(evidence_card_id, **changes)
     if updated is None:
         raise RuntimeError(f"证据 E{evidence_card_id} 保存失败。")
@@ -459,7 +479,20 @@ def review_evidence_card(
             recheck_claim(db, claim_id)
             rechecked_claim_ids.append(claim_id)
 
+    after_snapshot = {
+        field: _status_value(updated.get(field))
+        for field in changes
+    }
+    review_event_id = db.create_evidence_review_event(
+        evidence_card_id,
+        before=before_snapshot,
+        after=after_snapshot,
+        change_reason=normalized_reason,
+        rechecked_claim_ids=rechecked_claim_ids,
+    )
+
     return EvidenceReviewResult(
         evidence_card=updated,
         rechecked_claim_ids=tuple(rechecked_claim_ids),
+        review_event_id=review_event_id,
     )

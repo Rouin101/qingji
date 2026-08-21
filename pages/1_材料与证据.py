@@ -24,6 +24,68 @@ from qingji.ui import (
 from qingji.workflow import import_text_material, review_evidence_card
 
 
+_REVIEW_FIELD_LABELS = {
+    "title": "标题",
+    "summary": "摘要",
+    "evidence_type": "证据类型",
+    "review_status": "审核状态",
+}
+
+
+def render_review_history(db, project_id: int, evidence_card_id: int) -> None:
+    """Render the append-only human review history for one evidence card."""
+
+    events = db.list_evidence_review_events(
+        project_id,
+        evidence_card_id=evidence_card_id,
+        limit=100,
+    )
+    st.markdown(f"#### 审核历史（{len(events)}）")
+    if not events:
+        st.caption("暂无审核记录。旧数据和系统初始化状态不会伪造人工审核历史。")
+        return
+    for event in events:
+        before = event.get("before") or {}
+        after = event.get("after") or {}
+        old_status = REVIEW_STATUS_LABELS.get(
+            before.get("review_status"), "未知"
+        )
+        new_status = REVIEW_STATUS_LABELS.get(
+            after.get("review_status"), "未知"
+        )
+        changed_fields = [
+            field
+            for field in _REVIEW_FIELD_LABELS
+            if before.get(field) != after.get(field)
+        ]
+        with st.container(border=True):
+            st.markdown(
+                f"**审核记录 H{event['id']} · {old_status} → {new_status}**"
+            )
+            st.caption(format_datetime(event.get("created_at")))
+            st.write("审核说明：", event.get("change_reason") or "未记录")
+            st.write(
+                "变更字段：",
+                "、".join(_REVIEW_FIELD_LABELS[field] for field in changed_fields)
+                or "无",
+            )
+            if "title" in changed_fields:
+                st.write(
+                    "标题变化：",
+                    f"{before.get('title') or '—'} → {after.get('title') or '—'}",
+                )
+            if "summary" in changed_fields:
+                st.write(
+                    "摘要变化：",
+                    f"{before.get('summary') or '—'} → {after.get('summary') or '—'}",
+                )
+            rechecked_ids = event.get("rechecked_claim_ids") or []
+            st.caption(
+                "触发重新核验："
+                + ("、".join(f"C{item}" for item in rechecked_ids) or "无")
+            )
+
+
 configure_page("材料与证据", "🗂️")
 
 try:
@@ -284,6 +346,12 @@ with tab_review:
                     horizontal=True,
                     key=f"decision_{card_id}",
                 )
+                change_reason = st.text_area(
+                    "本次审核说明（实际变更时必填）",
+                    placeholder="例如：已核对来源与授权，批准进入可引用证据集。",
+                    max_chars=500,
+                    key=f"review_reason_{card_id}",
+                )
                 save_card = st.form_submit_button(
                     "保存审核结果", type="primary"
                 )
@@ -299,19 +367,27 @@ with tab_review:
                             summary=edited_summary.strip(),
                             evidence_type=edited_type,
                             review_status=decision,
+                            change_reason=change_reason,
                         )
                     except Exception as exc:
                         st.error(f"保存审核结果失败：{exc}")
                     else:
                         refreshed_count = len(review_result.rechecked_claim_ids)
-                        if refreshed_count:
+                        if review_result.review_event_id is None:
+                            st.info("没有检测到实际变更，因此未新增审核记录。")
+                        elif refreshed_count:
                             st.success(
                                 f"证据 E{card_id} 已更新，并已重新核验当前项目的 "
                                 f"{refreshed_count} 条结论。"
                             )
                         else:
                             st.success(f"证据 E{card_id} 已更新。")
-                        st.rerun()
+                        if review_result.review_event_id is not None:
+                            st.rerun()
+            try:
+                render_review_history(db, project_id, card_id)
+            except Exception as exc:
+                st.error(f"读取证据审核历史失败：{exc}")
 
 with tab_materials:
     st.markdown("### 已保存材料")

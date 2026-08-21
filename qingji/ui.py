@@ -285,7 +285,7 @@ def render_sidebar_note(project: Mapping[str, Any] | None = None) -> None:
                 f"当前项目：{project.get('name', '未命名项目')}\n\n"
                 "项目切换与新建请返回“项目概览”。"
             )
-        st.caption("v0.8 · 单人开发版")
+        st.caption("v0.9 · 单人开发版")
 
 
 def row_to_dict(row: Any) -> dict[str, Any]:

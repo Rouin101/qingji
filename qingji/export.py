@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import json
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, is_dataclass
@@ -21,6 +22,19 @@ _EVIDENCE_LABELS = {
     "field_observation": "团队现场观察",
     "formal_record": "文献或正式记录",
     "team_analysis": "团队分析",
+}
+
+_REVIEW_LABELS = {
+    "draft": "待审核",
+    "approved": "已批准",
+    "rejected": "已拒绝",
+}
+
+_REVIEW_FIELD_LABELS = {
+    "title": "标题",
+    "summary": "摘要",
+    "evidence_type": "证据类型",
+    "review_status": "审核状态",
 }
 
 
@@ -65,12 +79,24 @@ def _quote_markdown(text: str) -> list[str]:
     return [f"> {line}" for line in lines]
 
 
+def _markdown_inline(value: Any) -> str:
+    """Keep user-authored audit text on one safe Markdown line."""
+
+    return (
+        html.escape(str(value or "未记录"), quote=False)
+        .replace("\r\n", " ")
+        .replace("\n", " ")
+        .replace("\r", " ")
+    )
+
+
 def render_project_markdown(
     project: Any,
     claims: Iterable[Any],
     evidence_cards: Iterable[Any],
     links: Iterable[Any] = (),
     tasks: Iterable[Any] = (),
+    review_events: Iterable[Any] = (),
 ) -> str:
     """Render already-fetched rows while excluding unsafe evidence cards."""
 
@@ -107,6 +133,7 @@ def render_project_markdown(
 
     claim_rows = [_row_dict(row) for row in claims]
     task_rows = [_row_dict(row) for row in tasks]
+    review_rows = [_row_dict(row) for row in review_events]
     lines = [
         f"# 青迹可信证据导出｜{project_data.get('name', '未命名项目')}",
         "",
@@ -182,6 +209,38 @@ def render_project_markdown(
         lines.extend(_quote_markdown(str(evidence.get("quote", ""))))
         lines.append("")
 
+    lines.extend(("## 证据审核变更日志", ""))
+    if not review_rows:
+        lines.extend(("暂无人工审核变更记录。", ""))
+    for event in review_rows:
+        before = _row_dict(event.get("before"))
+        after = _row_dict(event.get("after"))
+        old_status = _REVIEW_LABELS.get(
+            _enum_value(before.get("review_status")), "未知"
+        )
+        new_status = _REVIEW_LABELS.get(
+            _enum_value(after.get("review_status")), "未知"
+        )
+        changed_fields = [
+            label
+            for field, label in _REVIEW_FIELD_LABELS.items()
+            if before.get(field) != after.get(field)
+        ]
+        rechecked_ids = _json_list(event.get("rechecked_claim_ids"))
+        lines.extend(
+            (
+                f"### 审核记录 H{event.get('id', 0)}｜E{event.get('evidence_card_id', 0)}",
+                "",
+                f"- 时间：{event.get('created_at') or '未记录'}",
+                f"- 审核状态：{old_status} → {new_status}",
+                "- 变更字段：" + ("、".join(changed_fields) or "无"),
+                f"- 审核说明：{_markdown_inline(event.get('change_reason'))}",
+                "- 触发重新核验："
+                + ("、".join(f"C{item}" for item in rechecked_ids) or "无"),
+                "",
+            )
+        )
+
     lines.extend(("## 未解决的补证任务", ""))
     open_tasks = [
         task for task in task_rows if _enum_value(task.get("status")) == "open"
@@ -200,7 +259,7 @@ def render_project_markdown(
             "",
             "---",
             "",
-            "由青迹 v0.8 本地可信证据链流程生成。",
+            "由青迹 v0.9 本地可信证据链流程生成。",
             "",
         )
     )
@@ -217,4 +276,12 @@ def export_project_markdown(db: Any, project_id: int) -> str:
     for claim in claims:
         links.extend(db.list_claim_evidence_links(int(claim["id"])))
     tasks = db.list_followup_tasks(project_id=project_id)
-    return render_project_markdown(project, claims, evidence_cards, links, tasks)
+    review_events = db.list_evidence_review_events(project_id, limit=500)
+    return render_project_markdown(
+        project,
+        claims,
+        evidence_cards,
+        links,
+        tasks,
+        review_events,
+    )

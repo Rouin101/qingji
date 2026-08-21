@@ -287,10 +287,12 @@ class WorkflowTestCase(unittest.TestCase):
             summary=card["summary"],
             evidence_type=card["evidence_type"],
             review_status="rejected",
+            change_reason="来源复核未通过，撤回证据。",
         )
 
         self.assertIsInstance(review, EvidenceReviewResult)
         self.assertEqual(review.rechecked_claim_ids, (stored.claim_id,))
+        self.assertIsNotNone(review.review_event_id)
         refreshed = self.db.get_claim(stored.claim_id)
         self.assertEqual(refreshed["verdict"], Verdict.UNSUPPORTED.value)
         self.assertEqual(refreshed["evidence_links"], [])
@@ -300,6 +302,8 @@ class WorkflowTestCase(unittest.TestCase):
         markdown = export_project_markdown(self.db, self.project_id)
         self.assertNotIn("- 核验结果：已有支持", markdown)
         self.assertIn("- 支持证据：无", markdown)
+        self.assertIn("## 证据审核变更日志", markdown)
+        self.assertIn("来源复核未通过，撤回证据。", markdown)
 
     def test_approving_evidence_refreshes_only_its_project_claims(self) -> None:
         stored = check_and_store_claim(self.db, self.project_id, SIMPLE_CLAIM)
@@ -325,6 +329,16 @@ class WorkflowTestCase(unittest.TestCase):
             is_fictional=True,
         )
         card = self.db.get_evidence_card(imported.evidence_card_ids[0])
+        with self.assertRaisesRegex(ValueError, "审核或修改的说明"):
+            review_evidence_card(
+                self.db,
+                int(card["id"]),
+                title=card["title"],
+                summary=card["summary"],
+                evidence_type=card["evidence_type"],
+                review_status="approved",
+                change_reason="",
+            )
         review = review_evidence_card(
             self.db,
             int(card["id"]),
@@ -332,9 +346,11 @@ class WorkflowTestCase(unittest.TestCase):
             summary=card["summary"],
             evidence_type=card["evidence_type"],
             review_status="approved",
+            change_reason="已核对来源与授权。",
         )
 
         self.assertEqual(review.rechecked_claim_ids, (stored.claim_id,))
+        self.assertIsNotNone(review.review_event_id)
         self.assertEqual(
             self.db.get_claim(stored.claim_id)["verdict"], Verdict.SUPPORTED.value
         )
@@ -348,6 +364,25 @@ class WorkflowTestCase(unittest.TestCase):
             other_run_before["id"],
         )
 
+        no_change = review_evidence_card(
+            self.db,
+            int(card["id"]),
+            title=card["title"],
+            summary=card["summary"],
+            evidence_type=card["evidence_type"],
+            review_status="approved",
+            change_reason="",
+        )
+        self.assertIsNone(no_change.review_event_id)
+        self.assertEqual(
+            len(
+                self.db.list_evidence_review_events(
+                    self.project_id, evidence_card_id=int(card["id"])
+                )
+            ),
+            1,
+        )
+
         withdrawn = review_evidence_card(
             self.db,
             int(card["id"]),
@@ -355,10 +390,19 @@ class WorkflowTestCase(unittest.TestCase):
             summary=card["summary"],
             evidence_type=card["evidence_type"],
             review_status="rejected",
+            change_reason="复核后撤回该证据。",
         )
         self.assertEqual(withdrawn.rechecked_claim_ids, (stored.claim_id,))
+        self.assertIsNotNone(withdrawn.review_event_id)
         reopened_tasks = self.db.list_followup_tasks(claim_id=stored.claim_id)
         self.assertTrue(all(task["status"] == "open" for task in reopened_tasks))
+        events = self.db.list_evidence_review_events(
+            self.project_id, evidence_card_id=int(card["id"])
+        )
+        self.assertEqual(len(events), 2)
+        self.assertEqual(events[0]["change_reason"], "复核后撤回该证据。")
+        self.assertEqual(events[0]["before"]["review_status"], "approved")
+        self.assertEqual(events[0]["after"]["review_status"], "rejected")
 
     def test_followup_recommendation_is_safe_for_real_projects(self) -> None:
         stored = check_and_store_claim(self.db, self.project_id, SIMPLE_CLAIM)

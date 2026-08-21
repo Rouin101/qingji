@@ -211,6 +211,23 @@ class Database:
         CREATE INDEX IF NOT EXISTS idx_evidence_segment
             ON evidence_cards(segment_id);
 
+        CREATE TABLE IF NOT EXISTS evidence_review_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL
+                REFERENCES projects(id) ON DELETE CASCADE,
+            evidence_card_id INTEGER NOT NULL
+                REFERENCES evidence_cards(id) ON DELETE CASCADE,
+            before_json TEXT NOT NULL DEFAULT '{}',
+            after_json TEXT NOT NULL DEFAULT '{}',
+            change_reason TEXT NOT NULL,
+            rechecked_claim_ids_json TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_review_events_project
+            ON evidence_review_events(project_id, id DESC);
+        CREATE INDEX IF NOT EXISTS idx_review_events_evidence
+            ON evidence_review_events(evidence_card_id, id DESC);
+
         CREATE TABLE IF NOT EXISTS claims (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             project_id INTEGER NOT NULL
@@ -382,6 +399,9 @@ class Database:
             ("rule_flags_json", "rule_flags"),
             ("input_json", "input"),
             ("output_json", "output"),
+            ("before_json", "before"),
+            ("after_json", "after"),
+            ("rechecked_claim_ids_json", "rechecked_claim_ids"),
         ):
             if json_field in result:
                 try:
@@ -757,6 +777,88 @@ class Database:
         return self.update_evidence_card(
             evidence_card_id, review_status=review_status
         )
+
+    def create_evidence_review_event(
+        self,
+        evidence_card_id: int,
+        *,
+        before: Mapping[str, Any],
+        after: Mapping[str, Any],
+        change_reason: str,
+        rechecked_claim_ids: Sequence[int] = (),
+    ) -> int:
+        """Append one immutable human-review event for an evidence card."""
+
+        reason = str(change_reason or "").strip()
+        if not reason:
+            raise ValueError("证据审核说明不能为空。")
+        if len(reason) > 500:
+            raise ValueError("证据审核说明不能超过 500 字。")
+        normalized_claim_ids = list(dict.fromkeys(int(item) for item in rechecked_claim_ids))
+        now = _utc_now()
+        with self.connect() as connection:
+            evidence = connection.execute(
+                "SELECT project_id FROM evidence_cards WHERE id = ?",
+                (int(evidence_card_id),),
+            ).fetchone()
+            if evidence is None:
+                raise ValueError(f"Evidence card {evidence_card_id} does not exist")
+            project_id = int(evidence["project_id"])
+            if normalized_claim_ids:
+                placeholders = ", ".join("?" for _ in normalized_claim_ids)
+                rows = connection.execute(
+                    "SELECT id, project_id FROM claims "
+                    f"WHERE id IN ({placeholders})",
+                    normalized_claim_ids,
+                ).fetchall()
+                if len(rows) != len(normalized_claim_ids) or any(
+                    int(row["project_id"]) != project_id for row in rows
+                ):
+                    raise ValueError(
+                        "重新核验的结论必须全部属于证据所在项目。"
+                    )
+            cursor = connection.execute(
+                "INSERT INTO evidence_review_events("
+                "project_id, evidence_card_id, before_json, after_json, "
+                "change_reason, rechecked_claim_ids_json, created_at"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    project_id,
+                    int(evidence_card_id),
+                    _json(dict(before), {}),
+                    _json(dict(after), {}),
+                    reason,
+                    _json(normalized_claim_ids, []),
+                    now,
+                ),
+            )
+        return int(cursor.lastrowid)
+
+    def list_evidence_review_events(
+        self,
+        project_id: int,
+        *,
+        evidence_card_id: int | None = None,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        """List newest review events without crossing the project boundary."""
+
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 500:
+            raise ValueError("limit 必须是 1 到 500 之间的整数。")
+        clauses = ["project_id = ?"]
+        params: list[Any] = [int(project_id)]
+        if evidence_card_id is not None:
+            clauses.append("evidence_card_id = ?")
+            params.append(int(evidence_card_id))
+        params.append(limit)
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM evidence_review_events WHERE "
+                + " AND ".join(clauses)
+                + " ORDER BY id DESC LIMIT ?",
+                params,
+            ).fetchall()
+        return self._rows(rows)
 
     def delete_evidence_card(self, evidence_card_id: int) -> bool:
         return self._delete("evidence_cards", evidence_card_id)

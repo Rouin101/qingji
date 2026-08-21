@@ -38,6 +38,7 @@ class DatabaseTestCase(unittest.TestCase):
                 "materials",
                 "segments",
                 "evidence_cards",
+                "evidence_review_events",
                 "claims",
                 "claim_evidence_links",
                 "followup_tasks",
@@ -81,6 +82,12 @@ class DatabaseTestCase(unittest.TestCase):
                 for row in connection.execute("PRAGMA table_info(agent_runs)")
             }
         self.assertIn("claim_id", agent_run_columns)
+        with sqlite3.connect(legacy_path) as connection:
+            review_event_table = connection.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type = 'table' AND name = 'evidence_review_events'"
+            ).fetchone()
+        self.assertIsNotNone(review_event_table)
 
     def test_crud_search_stats_and_cascade(self) -> None:
         project_id = self.db.create_project("测试项目", "仅供测试")
@@ -169,6 +176,63 @@ class DatabaseTestCase(unittest.TestCase):
         claim_id = self.db.create_claim(project_b, "测试结论")
         with self.assertRaises(ValueError):
             self.db.link_claim_evidence(claim_id, card_id, "support")
+
+    def test_evidence_review_events_are_project_scoped_and_immutable(self) -> None:
+        project_a = self.db.create_project("审核项目A")
+        project_b = self.db.create_project("审核项目B")
+        material_a = self.db.create_material(project_a, "text")
+        segment_a = self.db.create_segment(material_a, 1, "测试")
+        card_a = self.db.create_evidence_card(
+            project_a,
+            segment_a,
+            "field_observation",
+            "原标题",
+            "摘录",
+            "原摘要",
+        )
+        claim_a = self.db.create_claim(project_a, "项目A结论")
+        claim_b = self.db.create_claim(project_b, "项目B结论")
+
+        first = self.db.create_evidence_review_event(
+            card_a,
+            before={"title": "原标题", "review_status": "draft"},
+            after={"title": "新标题", "review_status": "approved"},
+            change_reason="已核对来源与授权。",
+            rechecked_claim_ids=[claim_a],
+        )
+        second = self.db.create_evidence_review_event(
+            card_a,
+            before={"title": "新标题", "review_status": "approved"},
+            after={"title": "再次修改", "review_status": "approved"},
+            change_reason="修正摘要表述。",
+        )
+
+        history = self.db.list_evidence_review_events(
+            project_a, evidence_card_id=card_a
+        )
+        self.assertEqual([item["id"] for item in history], [second, first])
+        self.assertEqual(history[1]["before"]["title"], "原标题")
+        self.assertEqual(history[1]["after"]["review_status"], "approved")
+        self.assertEqual(history[1]["rechecked_claim_ids"], [claim_a])
+        self.assertEqual(
+            self.db.list_evidence_review_events(project_b), []
+        )
+        with self.assertRaises(ValueError):
+            self.db.create_evidence_review_event(
+                card_a,
+                before={},
+                after={},
+                change_reason="错误跨项目记录",
+                rechecked_claim_ids=[claim_b],
+            )
+        for invalid_limit in (0, 501, True, "2"):
+            with self.subTest(limit=invalid_limit):
+                with self.assertRaises(ValueError):
+                    self.db.list_evidence_review_events(
+                        project_a, limit=invalid_limit
+                    )
+        self.assertFalse(hasattr(self.db, "update_evidence_review_event"))
+        self.assertFalse(hasattr(self.db, "delete_evidence_review_event"))
 
     def test_update_apis_reject_parent_reassignment(self) -> None:
         project_a = self.db.create_project("项目A")

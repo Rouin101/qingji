@@ -69,6 +69,19 @@ def _approved_card_count() -> int:
     )
 
 
+def _newest_draft_card_id() -> int:
+    database = _db()
+    project = database.get_project_by_name(
+        "数字便民服务体验调研（虚构测试项目）"
+    )
+    assert project is not None
+    drafts = database.list_evidence_cards(
+        int(project["id"]), review_status="draft"
+    )
+    assert drafts, "导入后应生成待审核证据卡"
+    return int(drafts[0]["id"])
+
+
 def step_import_and_approve(app: AppTest) -> None:
     app.switch_page("pages/1_材料与证据.py")
     app.run()
@@ -86,14 +99,26 @@ def step_import_and_approve(app: AppTest) -> None:
     _expect_no_exception(app, "导入材料")
     assert any("已保存" in text for text in _success_texts(app)), _success_texts(app)
 
-    # The freshly imported card is a draft, so its expander is open and its
-    # review-status radio appears first among the per-card radios.
-    app.radio[1].set_value("approved")
-    app.button[1].click()
+    card_id = _newest_draft_card_id()
+    app.radio(key=f"decision_{card_id}").set_value("approved")
+    app.text_area(key=f"review_reason_{card_id}").set_value(
+        "端到端测试：已核对虚构材料来源与授权。"
+    )
+    app.button(
+        key=f"FormSubmitter:evidence_edit_{card_id}-保存审核结果"
+    ).click()
     app.run()
     _expect_no_exception(app, "批准证据卡")
-    assert any("已更新" in text for text in _success_texts(app)), _success_texts(app)
     assert _approved_card_count() == 4, "演示 3 张 + 新导入 1 张应全部已批准"
+    database = _db()
+    project = database.get_project_by_name(
+        "数字便民服务体验调研（虚构测试项目）"
+    )
+    events = database.list_evidence_review_events(
+        int(project["id"]), evidence_card_id=card_id
+    )
+    assert len(events) == 1, "人工批准应生成一条审核历史"
+    assert events[0]["change_reason"].startswith("端到端测试")
 
 
 def step_check_claim(app: AppTest) -> None:
@@ -162,6 +187,8 @@ def step_export(app: AppTest) -> None:
     assert GROUP_CLAIM in markdown
     assert "存在冲突" in markdown
     assert "证据目录" in markdown
+    assert "证据审核变更日志" in markdown
+    assert "端到端测试：已核对虚构材料来源与授权。" in markdown
     assert "虚构" in markdown
     assert "13812345678" not in markdown, "导出不得包含脱敏前手机号"
     print("导出 Markdown 长度：", len(markdown))

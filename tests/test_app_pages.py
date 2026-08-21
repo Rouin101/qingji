@@ -252,6 +252,9 @@ class AppPageSmokeTest(unittest.TestCase):
         app.switch_page("pages/1_材料与证据.py")
         app.run()
         app.radio(key=f"decision_{card_id}").set_value("rejected")
+        app.text_area(key=f"review_reason_{card_id}").set_value(
+            "页面复核后撤回证据。"
+        )
         app.button(
             key=f"FormSubmitter:evidence_edit_{card_id}-保存审核结果"
         ).click()
@@ -261,6 +264,14 @@ class AppPageSmokeTest(unittest.TestCase):
         refreshed = database.get_claim(stored.claim_id)
         self.assertEqual(refreshed["verdict"], "unsupported")
         self.assertEqual(refreshed["evidence_links"], [])
+        events = database.list_evidence_review_events(
+            project_id, evidence_card_id=card_id
+        )
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["change_reason"], "页面复核后撤回证据。")
+        self.assertTrue(
+            any("审核历史（1）" in item.value for item in app.markdown)
+        )
         self.assertTrue(
             all(
                 task["status"] == "open"
