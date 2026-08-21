@@ -9,6 +9,7 @@ full vertical slice the way a presenter would:
     4. add the fictional opposite-viewpoint material
     5. re-check the same claim
     6. export the Markdown and assert it stays traceable
+    7. back up and restore the complete project under a new name
 
 Every step asserts the page ran without exceptions and then verifies the
 underlying database state directly.
@@ -30,6 +31,11 @@ os.environ["QINGJI_DATA_DIR"] = _DATA_DIR
 
 from streamlit.testing.v1 import AppTest  # noqa: E402
 
+from qingji.backup import (  # noqa: E402
+    export_project_backup,
+    inspect_project_backup,
+    restore_project_backup,
+)
 from qingji.db import Database  # noqa: E402
 from qingji.export import export_project_markdown  # noqa: E402
 
@@ -194,6 +200,27 @@ def step_export(app: AppTest) -> None:
     print("导出 Markdown 长度：", len(markdown))
 
 
+def step_backup_and_restore() -> None:
+    database = _db()
+    project = database.get_project_by_name(
+        "数字便民服务体验调研（虚构测试项目）"
+    )
+    source_id = int(project["id"])
+    backup = export_project_backup(database, source_id)
+    inspection = inspect_project_backup(backup.content)
+    assert inspection.counts["materials"] >= 4
+    restored = restore_project_backup(
+        database, backup.content, "端到端备份恢复副本"
+    )
+    assert database.get_project_stats(restored.project_id) == database.get_project_stats(
+        source_id
+    )
+    restored_markdown = export_project_markdown(database, restored.project_id)
+    assert GROUP_CLAIM in restored_markdown
+    assert "证据审核变更日志" in restored_markdown
+    assert "13812345678" not in restored_markdown
+
+
 def main() -> None:
     app = AppTest.from_file("app.py", default_timeout=60)
     app.run()
@@ -208,6 +235,8 @@ def main() -> None:
     print("[OK] 补充观点与重新核验（存在冲突）通过")
     step_export(app)
     print("[OK] Markdown 可信导出通过")
+    step_backup_and_restore()
+    print("[OK] 项目完整备份与恢复通过")
     print("E2E 全部通过")
 
 

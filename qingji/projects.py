@@ -18,6 +18,9 @@ _PROJECT_SCOPED_SESSION_KEYS = (
     "claim_draft",
     "last_import_result",
     "material_draft_text",
+    "project_backup_payload",
+    "project_backup_filename",
+    "project_backup_source_id",
 )
 
 

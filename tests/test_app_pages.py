@@ -19,6 +19,7 @@ _TEST_DATA_DIR = tempfile.mkdtemp(prefix="qingji_apptest_")
 os.environ["QINGJI_DATA_DIR"] = _TEST_DATA_DIR
 
 from streamlit.testing.v1 import AppTest  # noqa: E402
+from qingji.backup import inspect_project_backup  # noqa: E402
 from qingji.diagnostics import RETRIEVAL_DIAGNOSTIC_VERSION  # noqa: E402
 from qingji.ui import format_datetime, get_database  # noqa: E402
 from qingji.workflow import (  # noqa: E402
@@ -59,6 +60,23 @@ class AppPageSmokeTest(unittest.TestCase):
                     [],
                     f"{path} raised: {app.exception}",
                 )
+
+    def test_project_backup_can_be_generated_from_overview(self) -> None:
+        app = AppTest.from_file("app.py", default_timeout=30)
+        app.run()
+        project_id = int(app.session_state["qingji_project_id"])
+
+        app.button(key=f"generate_project_backup_{project_id}").click()
+        app.run()
+
+        self.assertEqual(app.exception, [])
+        content = app.session_state["project_backup_payload"]
+        inspection = inspect_project_backup(content)
+        self.assertEqual(inspection.source_project_name, "数字便民服务体验调研（虚构测试项目）")
+        self.assertGreaterEqual(inspection.counts["materials"], 3)
+        self.assertTrue(
+            any("下载备份包" in button.label for button in app.get("download_button"))
+        )
 
     def test_utc_timestamps_are_shown_in_shanghai_time(self) -> None:
         self.assertEqual(

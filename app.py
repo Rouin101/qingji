@@ -2,8 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
+
 import streamlit as st
 
+from qingji.backup import (
+    export_project_backup,
+    inspect_project_backup,
+    restore_project_backup,
+)
 from qingji.demo import DEMO_PROJECT_NAME
 from qingji.projects import (
     activate_project,
@@ -86,6 +93,103 @@ with st.expander("新建项目"):
             activate_project(st.session_state, created_project_id)
             st.success("项目已创建，正在进入新工作区。")
             st.rerun()
+
+with st.expander("项目备份与恢复"):
+    st.caption(
+        "备份包包含当前项目的数据库记录、审核历史、评测记录，以及青迹托管的原文和脱敏文件。"
+    )
+    st.warning("备份包可能含有未经脱敏的原始材料，请妥善保管，不要公开上传。")
+    backup_col, restore_col = st.columns(2)
+    with backup_col:
+        st.markdown("#### 导出当前项目")
+        if st.button(
+            "生成完整备份包",
+            key=f"generate_project_backup_{project_id}",
+            width="stretch",
+        ):
+            try:
+                backup = export_project_backup(db, project_id)
+            except ValueError as exc:
+                st.error(str(exc))
+            except Exception as exc:
+                st.error(f"生成项目备份失败：{exc}")
+            else:
+                st.session_state["project_backup_payload"] = backup.content
+                st.session_state["project_backup_filename"] = backup.filename
+                st.session_state["project_backup_source_id"] = project_id
+                st.success(
+                    f"备份包已生成，包含 {backup.material_file_count} 个材料文件。"
+                )
+        backup_payload = st.session_state.get("project_backup_payload")
+        backup_source_id = st.session_state.get("project_backup_source_id")
+        if backup_payload and int(backup_source_id or 0) == project_id:
+            st.download_button(
+                "下载备份包",
+                data=backup_payload,
+                file_name=st.session_state.get("project_backup_filename")
+                or "青迹_项目备份_v1.zip",
+                mime="application/zip",
+                key=f"download_project_backup_{project_id}",
+                type="primary",
+                width="stretch",
+            )
+
+    with restore_col:
+        st.markdown("#### 恢复为新项目")
+        uploaded_backup = st.file_uploader(
+            "选择青迹 ZIP 备份包",
+            type=["zip"],
+            key="restore_project_backup_upload",
+        )
+        if uploaded_backup is not None:
+            uploaded_content = uploaded_backup.getvalue()
+            try:
+                inspection = inspect_project_backup(uploaded_content)
+            except ValueError as exc:
+                st.error(str(exc))
+            except Exception as exc:
+                st.error(f"读取项目备份失败：{exc}")
+            else:
+                st.success(f"备份校验通过：{inspection.source_project_name}")
+                st.caption(
+                    f"材料 {inspection.counts['materials']} · "
+                    f"证据 {inspection.counts['evidence_cards']} · "
+                    f"结论 {inspection.counts['claims']} · "
+                    f"材料文件 {inspection.material_file_count}"
+                )
+                default_restore_name = inspection.source_project_name
+                if db.get_project_by_name(default_restore_name) is not None:
+                    default_restore_name += "（恢复）"
+                upload_key = hashlib.sha256(uploaded_content).hexdigest()[:12]
+                restored_project_name = st.text_input(
+                    "恢复后的项目名称",
+                    value=default_restore_name,
+                    key=f"restored_project_name_{upload_key}",
+                )
+                restore_acknowledged = st.checkbox(
+                    "我确认备份来源可信，并理解其中可能包含原始材料",
+                    key=f"restore_ack_{upload_key}",
+                )
+                if st.button(
+                    "校验并恢复",
+                    disabled=not restore_acknowledged,
+                    key=f"restore_project_backup_{upload_key}",
+                    width="stretch",
+                ):
+                    try:
+                        restored = restore_project_backup(
+                            db, uploaded_content, restored_project_name
+                        )
+                    except ValueError as exc:
+                        st.error(str(exc))
+                    except Exception as exc:
+                        st.error(f"恢复项目失败：{exc}")
+                    else:
+                        activate_project(st.session_state, restored.project_id)
+                        st.success(
+                            f"项目“{restored.project_name}”已完整恢复，正在进入新工作区。"
+                        )
+                        st.rerun()
 
 if not is_demo_project(project):
     with st.expander("管理当前项目"):
