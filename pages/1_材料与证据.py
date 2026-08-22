@@ -7,6 +7,7 @@ from datetime import date
 import streamlit as st
 
 from qingji.config import llm_settings
+from qingji.document import DocumentImportError, extract_uploaded_text
 from qingji.llm import LLMError, request_evidence_assistance
 from qingji.models import ConsentStatus
 from qingji.ui import (
@@ -32,6 +33,14 @@ _REVIEW_FIELD_LABELS = {
     "evidence_type": "证据类型",
     "review_status": "审核状态",
 }
+
+_SOURCE_ROLE_OPTIONS = [
+    "受访者",
+    "工作人员",
+    "调研团队观察员",
+    "正式记录",
+    "团队分析",
+]
 
 
 def render_review_history(db, project_id: int, evidence_card_id: int) -> None:
@@ -148,22 +157,24 @@ tab_import, tab_review, tab_materials = st.tabs(
 with tab_import:
     st.markdown("### 导入新的文字材料")
     st.caption(
-        "可粘贴文字，或上传 UTF-8 编码的 .txt/.md 文件。"
+        "可粘贴文字，或上传 UTF-8 编码的 .txt/.md、未加密的 Word .docx 和可提取文本的 .pdf 文件。"
         "请如实填写来源、采集场景和授权状态；未确认授权的材料不会进入核验。"
     )
 
     uploaded = st.file_uploader(
         "上传文字文件（可选）",
-        type=["txt", "md"],
-        help="文件内容会先在本地读取，不会自动发送到云端。",
+        type=["txt", "md", "docx", "pdf"],
+        help="文字、Word 和 PDF 文件会先在本地读取，不会自动发送到云端。扫描版 PDF 需要先转为可复制文字。",
     )
     uploaded_text = ""
     uploaded_error = ""
     if uploaded is not None:
         try:
-            uploaded_text = uploaded.getvalue().decode("utf-8-sig")
-        except UnicodeDecodeError:
-            uploaded_error = "文件不是 UTF-8 编码，请转换编码后重试。"
+            uploaded_text = extract_uploaded_text(
+                uploaded.name, uploaded.getvalue()
+            )
+        except DocumentImportError as exc:
+            uploaded_error = str(exc)
             st.error(uploaded_error)
 
     # Keep all fields after submission so validation errors never erase a
@@ -193,16 +204,9 @@ with tab_import:
                     else "手工录入_项目记录.txt"
                 ),
             )
-            source_options = [
-                "受访者",
-                "工作人员",
-                "调研团队观察员",
-                "正式记录",
-                "团队分析",
-            ]
             source_role = st.selectbox(
                 "来源角色",
-                source_options,
+                _SOURCE_ROLE_OPTIONS,
                 help="来源角色会影响默认的证据类型，但仍需人工审核。",
             )
             captured_at = st.date_input("采集日期", value=date.today())
@@ -285,6 +289,139 @@ with tab_import:
                 st.info(
                     "下一步：打开上方“审核证据卡”标签，确认标题、摘要、类型和审核状态。"
                 )
+
+    st.divider()
+    with st.expander("批量导入文字文件", expanded=False):
+        st.caption(
+            "一次选择多个 UTF-8 编码的 .txt/.md、未加密的 Word .docx 或可提取文本的 .pdf 文件。"
+            "批量导入会对所有文件使用相同的来源角色、"
+            "采集场景、授权状态和自定义敏感词；每个文件仍会单独生成材料和证据卡。"
+        )
+        with st.form("batch_material_import_form", clear_on_submit=False):
+            batch_files = st.file_uploader(
+                "选择多个文字文件",
+                type=["txt", "md", "docx", "pdf"],
+                accept_multiple_files=True,
+                key="batch_material_files",
+                help="文件内容只会在本地读取和处理，不会自动发送到云端。",
+            )
+            batch_left, batch_right = st.columns(2)
+            with batch_left:
+                batch_source_role = st.selectbox(
+                    "批量来源角色",
+                    _SOURCE_ROLE_OPTIONS,
+                    key="batch_source_role",
+                    help="所选角色会应用于本次批量导入的全部文件。",
+                )
+                batch_captured_at = st.date_input(
+                    "批量采集日期",
+                    value=date.today(),
+                    key="batch_captured_at",
+                )
+            with batch_right:
+                batch_context = st.text_input(
+                    "批量采集场景",
+                    value="",
+                    key="batch_context",
+                    placeholder="说明这批材料获取的时间、地点或活动场景",
+                )
+                batch_consent_choice = st.radio(
+                    "批量记录与使用授权",
+                    options=["confirmed", "unknown", "denied"],
+                    index=1,
+                    key="batch_consent_choice",
+                    format_func=lambda item: CONSENT_LABELS[item],
+                    horizontal=True,
+                    help="未确认或被拒绝授权的材料不会成为可引用证据。",
+                )
+                batch_custom_terms_text = st.text_input(
+                    "批量自定义敏感词（可选）",
+                    key="batch_custom_terms",
+                    placeholder="用逗号分隔，例如：姓名, 详细地址",
+                )
+            batch_confirmed = st.checkbox(
+                "我确认已如实填写这批材料的来源和授权状态，并会在引用或导出前复核脱敏文本。",
+                value=False,
+                key="batch_material_confirmed",
+            )
+            batch_submitted = st.form_submit_button(
+                "批量本地检查并生成证据卡",
+                type="primary",
+                width="stretch",
+            )
+
+        if batch_submitted:
+            if not batch_files:
+                st.error("请先选择至少一个文字文件。")
+            elif not batch_context.strip():
+                st.error("请填写批量采集场景。")
+            elif not batch_confirmed:
+                st.error("请先确认这批材料的来源、授权状态和脱敏复核责任。")
+            else:
+                custom_terms = [
+                    item.strip()
+                    for item in batch_custom_terms_text.replace("，", ",").split(",")
+                    if item.strip()
+                ]
+                decoded_files: list[tuple[str, str]] = []
+                decode_errors: list[str] = []
+                for batch_file in batch_files:
+                    try:
+                        content = extract_uploaded_text(
+                            batch_file.name, batch_file.getvalue()
+                        )
+                    except DocumentImportError as exc:
+                        decode_errors.append(f"{batch_file.name}（{exc}）")
+                        continue
+                    if not content.strip():
+                        decode_errors.append(f"{batch_file.name}（正文为空）")
+                        continue
+                    decoded_files.append((batch_file.name, content))
+
+                if decode_errors:
+                    st.error(
+                        "以下文件未通过本地检查，本次批量导入未写入任何文件："
+                        + "、".join(decode_errors)
+                    )
+                else:
+                    results = []
+                    failures: list[str] = []
+                    with st.spinner(
+                        f"正在本地检查并处理 {len(decoded_files)} 个文件……"
+                    ):
+                        for filename, content in decoded_files:
+                            try:
+                                result = import_text_material(
+                                    db,
+                                    project_id,
+                                    content,
+                                    original_filename=filename,
+                                    source_role=batch_source_role,
+                                    context=batch_context.strip(),
+                                    captured_at=batch_captured_at.isoformat(),
+                                    consent_status=ConsentStatus(batch_consent_choice),
+                                    custom_sensitive_terms=custom_terms,
+                                    is_fictional=False,
+                                )
+                            except Exception as exc:
+                                failures.append(f"{filename}：{exc}")
+                            else:
+                                results.append(result)
+                    if results:
+                        st.success(
+                            f"已处理 {len(results)} 个文件，共生成 "
+                            f"{sum(len(item.evidence_card_ids) for item in results)} 张待审核证据卡。"
+                        )
+                        with st.expander("查看批量导入结果", expanded=True):
+                            for result in results:
+                                st.write(
+                                    f"M{result.material_id}：已保存，生成 "
+                                    f"{len(result.evidence_card_ids)} 张证据卡。"
+                                )
+                                for warning in result.warnings:
+                                    st.caption(f"M{result.material_id}：{warning}")
+                    if failures:
+                        st.error("以下文件未能导入：" + "；".join(failures))
 
 with tab_review:
     st.markdown("### 人工审核证据卡")

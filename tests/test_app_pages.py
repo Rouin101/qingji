@@ -76,6 +76,38 @@ class AppPageSmokeTest(unittest.TestCase):
         self.assertEqual(app.text_area[0].value, draft_text)
         self.assertTrue(any("采集场景" in item.value for item in app.error))
 
+    def test_batch_material_import_creates_one_material_per_file(self) -> None:
+        database = get_database()
+        project_id = database.create_project("批量材料页面检查")
+
+        app = AppTest.from_file("app.py", default_timeout=30)
+        app.run()
+        app.session_state["qingji_project_id"] = project_id
+        app.switch_page("pages/1_材料与证据.py")
+        app.run()
+
+        app.file_uploader(key="batch_material_files").set_value(
+            [
+                ("批量材料A.txt", "受访者甲表示流程清楚。".encode(), "text/plain"),
+                ("批量材料B.md", "受访者乙表示需要帮助。".encode(), "text/markdown"),
+            ]
+        )
+        app.text_input(key="batch_context").set_value("批量材料页面检查场景")
+        app.radio(key="batch_consent_choice").set_value("confirmed")
+        app.checkbox(key="batch_material_confirmed").set_value(True)
+        app.button(
+            key="FormSubmitter:batch_material_import_form-批量本地检查并生成证据卡"
+        ).click()
+        app.run()
+
+        self.assertEqual(app.exception, [])
+        materials = database.list_materials(project_id)
+        self.assertEqual(
+            {item["original_filename"] for item in materials},
+            {"批量材料A.txt", "批量材料B.md"},
+        )
+        self.assertTrue(any("已处理 2 个文件" in item.value for item in app.success))
+
     def test_project_backup_can_be_generated_from_overview(self) -> None:
         app = AppTest.from_file("app.py", default_timeout=30)
         app.run()

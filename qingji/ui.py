@@ -292,7 +292,7 @@ def render_sidebar_note(project: Mapping[str, Any] | None = None) -> None:
                 f"当前项目：{project.get('name', '未命名项目')}\n\n"
                 "项目切换与新建请返回“项目概览”。"
             )
-        st.caption("v1.1 · 单人开发版")
+        st.caption("v1.2 · 单人开发版")
 
 
 def render_workflow_steps(current_step: str) -> None:
