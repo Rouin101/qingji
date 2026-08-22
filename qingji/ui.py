@@ -315,9 +315,7 @@ def render_sidebar_note(
         st.divider()
         st.markdown("### 青迹")
         st.caption("让实践有迹可循，让结论有据可查。")
-        if is_demo_project(project) or project is None:
-            st.info("当前项目已准备好基础材料。新增材料须先获授权，并在本地确认脱敏。")
-        else:
+        if not (is_demo_project(project) or project is None):
             st.info(
                 f"当前项目：{project.get('name', '未命名项目')}\n\n"
                 "项目切换与新建请返回“项目概览”。"
@@ -332,7 +330,7 @@ def render_sidebar_note(
                 f"待补证 {int(progress.get('open_followup_tasks', 0) or 0)}"
             )
             st.caption(_next_step_hint(progress))
-        st.caption("v1.2 · 单人开发版")
+        st.caption("v1.2 · 开发版")
 
 
 def render_workflow_steps(current_step: str) -> None:
