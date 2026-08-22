@@ -76,6 +76,17 @@ class AppPageSmokeTest(unittest.TestCase):
         self.assertEqual(app.text_area[0].value, draft_text)
         self.assertTrue(any("采集场景" in item.value for item in app.error))
 
+    def test_claim_form_keeps_input_after_validation_error(self) -> None:
+        app = self._open_claim_page()
+        invalid_claim = "超出长度限制的结论。" * 80
+        app.text_area[0].set_value(invalid_claim)
+        app.button(key="FormSubmitter:claim_check_form-开始核验").click()
+        app.run()
+
+        self.assertEqual(app.exception, [])
+        self.assertEqual(app.text_area[0].value, invalid_claim)
+        self.assertTrue(any("500 字以内" in item.value for item in app.error))
+
     def test_batch_material_import_creates_one_material_per_file(self) -> None:
         database = get_database()
         project_id = database.create_project("批量材料页面检查")

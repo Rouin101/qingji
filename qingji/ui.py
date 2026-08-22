@@ -276,7 +276,37 @@ def render_demo_banner(project: Mapping[str, Any] | None = None) -> None:
     )
 
 
-def render_sidebar_note(project: Mapping[str, Any] | None = None) -> None:
+def _next_step_hint(progress: Mapping[str, Any]) -> str:
+    materials = int(progress.get("materials", 0) or 0)
+    evidence_cards = int(progress.get("evidence_cards", 0) or 0)
+    approved_cards = int(progress.get("approved_evidence_cards", 0) or 0)
+    claims = int(progress.get("claims", 0) or 0)
+    open_tasks = int(progress.get("open_followup_tasks", 0) or 0)
+    if materials == 0:
+        return "下一步：导入一份文字材料"
+    if evidence_cards > approved_cards:
+        return "下一步：审核待处理的证据卡"
+    if claims == 0:
+        return "下一步：核验一句准备写入报告的话"
+    if open_tasks:
+        return "下一步：补充材料后重新核验"
+    return "下一步：查看成果并导出"
+
+
+def render_sidebar_note(
+    project: Mapping[str, Any] | None = None,
+    *,
+    database: Any | None = None,
+    project_id: int | None = None,
+) -> None:
+    """Render shared navigation, project context and lightweight progress."""
+
+    progress: Mapping[str, Any] | None = None
+    if database is not None and project_id is not None:
+        try:
+            progress = database.get_project_stats(int(project_id))
+        except Exception:
+            progress = None
     with st.sidebar:
         st.page_link("app.py", label="项目概览")
         st.page_link("pages/1_材料与证据.py", label="材料与证据")
@@ -292,6 +322,16 @@ def render_sidebar_note(project: Mapping[str, Any] | None = None) -> None:
                 f"当前项目：{project.get('name', '未命名项目')}\n\n"
                 "项目切换与新建请返回“项目概览”。"
             )
+        if progress is not None:
+            st.divider()
+            st.markdown("### 当前进度")
+            st.caption(
+                f"材料 {int(progress.get('materials', 0) or 0)} · "
+                f"已批准证据 {int(progress.get('approved_evidence_cards', 0) or 0)} · "
+                f"结论 {int(progress.get('claims', 0) or 0)} · "
+                f"待补证 {int(progress.get('open_followup_tasks', 0) or 0)}"
+            )
+            st.caption(_next_step_hint(progress))
         st.caption("v1.2 · 单人开发版")
 
 

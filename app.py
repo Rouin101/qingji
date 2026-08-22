@@ -44,7 +44,7 @@ except Exception as exc:
     st.info("请确认当前目录可写，并重新运行应用。")
     st.stop()
 
-render_sidebar_note(project)
+render_sidebar_note(project, database=db, project_id=project_id)
 render_page_intro(
     "QINGJI · 可信社会实践",
     "青迹",

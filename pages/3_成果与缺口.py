@@ -98,7 +98,7 @@ except Exception as exc:
     st.error(f"读取成果数据失败：{exc}")
     st.stop()
 
-render_sidebar_note(project)
+render_sidebar_note(project, database=db, project_id=project_id)
 render_page_intro(
     "03 · OUTPUT & GAPS",
     "成果与缺口",

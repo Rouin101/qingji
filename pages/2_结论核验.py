@@ -81,7 +81,7 @@ except Exception as exc:
     st.error(f"读取项目失败：{exc}")
     st.stop()
 
-render_sidebar_note(project)
+render_sidebar_note(project, database=db, project_id=project_id)
 render_page_intro(
     "02 · CLAIM CHECK",
     "结论核验",
@@ -97,7 +97,7 @@ if history_verdict_key not in st.session_state:
     st.session_state[history_verdict_key] = "all"
 
 st.markdown("### 核验一句话")
-with st.form("claim_check_form"):
+with st.form("claim_check_form", clear_on_submit=False):
     claim_text = st.text_area(
         "待核验结论",
         value=st.session_state.get(
