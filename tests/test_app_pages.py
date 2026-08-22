@@ -61,6 +61,21 @@ class AppPageSmokeTest(unittest.TestCase):
                     f"{path} raised: {app.exception}",
                 )
 
+    def test_material_form_keeps_input_after_validation_error(self) -> None:
+        app = AppTest.from_file("app.py", default_timeout=30)
+        app.run()
+        app.switch_page("pages/1_材料与证据.py")
+        app.run()
+
+        draft_text = "这段材料在校验失败后仍应保留。"
+        app.text_area[0].set_value(draft_text)
+        app.button[0].click()
+        app.run()
+
+        self.assertEqual(app.exception, [])
+        self.assertEqual(app.text_area[0].value, draft_text)
+        self.assertTrue(any("采集场景" in item.value for item in app.error))
+
     def test_project_backup_can_be_generated_from_overview(self) -> None:
         app = AppTest.from_file("app.py", default_timeout=30)
         app.run()
@@ -72,7 +87,7 @@ class AppPageSmokeTest(unittest.TestCase):
         self.assertEqual(app.exception, [])
         content = app.session_state["project_backup_payload"]
         inspection = inspect_project_backup(content)
-        self.assertEqual(inspection.source_project_name, "数字便民服务体验调研（虚构测试项目）")
+        self.assertEqual(inspection.source_project_name, "数字便民服务体验调研")
         self.assertGreaterEqual(inspection.counts["materials"], 3)
         self.assertTrue(
             any("下载备份包" in button.label for button in app.get("download_button"))

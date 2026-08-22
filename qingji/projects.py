@@ -57,7 +57,7 @@ def _require_user_project(db: Any, project_id: int) -> dict[str, Any]:
     if project is None:
         raise ValueError("项目不存在或已被删除。")
     if project.get("name") == DEMO_PROJECT_NAME:
-        raise ValueError("内置虚构测试项目不能重命名、归档或删除。")
+        raise ValueError("内置项目不能重命名、归档或删除。")
     return project
 
 

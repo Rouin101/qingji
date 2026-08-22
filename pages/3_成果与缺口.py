@@ -24,6 +24,7 @@ from qingji.ui import (
     render_demo_banner,
     render_page_intro,
     render_sidebar_note,
+    render_workflow_steps,
 )
 
 
@@ -104,6 +105,7 @@ render_page_intro(
     "把已经核验的表述、结论—证据关系和未解决任务放在一起，导出时继续保留来源定位。",
 )
 render_demo_banner(project)
+render_workflow_steps("output")
 
 summary_columns = st.columns(4)
 summary_columns[0].metric("核验记录", len(claims))
@@ -160,6 +162,12 @@ with tab_claims:
             if claims
             else "尚无核验结果。请先到“结论核验”页面检查一句话。"
         )
+        if not claims:
+            st.page_link(
+                "pages/2_结论核验.py",
+                label="去结论核验开始第一条检查",
+                icon="🔎",
+            )
     for claim in filtered_claims:
         verdict = claim.get("verdict", "unsupported")
         with st.expander(
@@ -261,7 +269,7 @@ with tab_mapping:
 with tab_export:
     st.markdown("### 导出可信 Markdown")
     st.caption(
-        "导出仅包含已脱敏、已授权、已审核的证据引用，并明确保留虚构测试声明和未解决缺口。"
+        "导出仅包含已脱敏、已授权、已审核的证据引用，并保留来源边界和未解决缺口。"
     )
     try:
         markdown_output = export_project_markdown(db, project_id)

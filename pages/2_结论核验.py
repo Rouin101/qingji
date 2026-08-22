@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import streamlit as st
 
+from qingji.config import llm_settings
 from qingji.demo import add_demo_supplement
+from qingji.llm import LLMConfigurationError, LLMError, request_claim_assistance
 from qingji.ui import (
     TASK_STATUS_LABELS,
     VERDICT_ICONS,
@@ -18,6 +20,7 @@ from qingji.ui import (
     render_demo_banner,
     render_page_intro,
     render_sidebar_note,
+    render_workflow_steps,
     verdict_box,
 )
 from qingji.workflow import check_and_store_claim, recheck_claim
@@ -41,6 +44,35 @@ RETRIEVAL_DECISION_LABELS = {
 }
 
 
+def render_claim_advice(advice_data: dict, *, persisted: bool = False) -> None:
+    """Render a stored model suggestion without treating it as a verdict."""
+
+    with st.container(border=True):
+        prefix = "已保存的模型建议" if persisted else "模型建议"
+        st.caption(
+            f"{prefix}（{advice_data.get('model') or '未标注'}）· 仅供人工复核"
+        )
+        st.markdown(f"**辅助摘要：** {advice_data.get('summary') or '—'}")
+        st.markdown(
+            f"**辅助改写：** {advice_data.get('safe_rewrite') or '—'}"
+        )
+        cited_ids = advice_data.get("cited_evidence_ids") or []
+        st.caption(
+            "引用证据："
+            + ("、".join(f"E{item}" for item in cited_ids) if cited_ids else "无")
+        )
+        suggestions = advice_data.get("follow_up_suggestions") or []
+        if suggestions:
+            st.markdown("**辅助补证建议：**")
+            for item in suggestions:
+                st.markdown(f"- {item}")
+        uncertainties = advice_data.get("uncertainties") or []
+        if uncertainties:
+            st.markdown("**模型主动标记的不确定性：**")
+            for item in uncertainties:
+                st.markdown(f"- {item}")
+
+
 configure_page("结论核验", "🔎")
 
 try:
@@ -56,6 +88,7 @@ render_page_intro(
     "输入一句准备写入报告的话。青迹只使用已授权、已审核的证据，说明它目前能支持到什么程度。",
 )
 render_demo_banner(project)
+render_workflow_steps("claims")
 demo_mode = is_demo_project(project)
 history_verdict_key = f"claim_history_verdict_{project_id}"
 history_query_key = f"claim_history_query_{project_id}"
@@ -236,8 +269,14 @@ relation_labels = {
     "context": "背景证据",
 }
 st.markdown("### 相关证据")
+linked_cards = []
 if not links:
     empty_state("当前未找到可引用证据。未授权或未审核的材料不会出现在这里。")
+    st.page_link(
+        "pages/1_材料与证据.py",
+        label="去材料与证据审核证据卡",
+        icon="🗂️",
+    )
 else:
     for relation in ("support", "contradict", "context"):
         relation_links = [
@@ -249,9 +288,94 @@ else:
         for link in relation_links:
             card = db.get_evidence_card(int(link["evidence_card_id"]))
             if card:
+                linked_cards.append(card)
                 st.markdown(evidence_card_html(card), unsafe_allow_html=True)
             if link.get("rationale"):
                 st.caption(f"关联说明：{link['rationale']}")
+
+st.markdown("### 可选的大模型辅助")
+advice_key = (
+    f"llm_advice_{project_id}_{active_claim_id}_"
+    f"{claim.get('checked_at') or '未核验'}"
+)
+advice_data = st.session_state.get(advice_key)
+advice_persisted = False
+if advice_data is None:
+    saved_run = db.get_latest_claim_run(
+        int(active_claim_id), "llm_claim_assistance"
+    )
+    saved_input = (saved_run or {}).get("input") or {}
+    if (
+        saved_run
+        and saved_run.get("status") == "completed"
+        and saved_input.get("claim_checked_at") == claim.get("checked_at")
+    ):
+        advice_data = saved_run.get("output") or None
+        advice_persisted = advice_data is not None
+
+if not llm_settings.configured:
+    st.info(
+        "当前未启用云端模型。青迹仍会使用本地规则完成核验；如需开启，"
+        "请先配置 QINGJI_LLM_ENABLED、QINGJI_LLM_API_KEY 和 QINGJI_LLM_MODEL。"
+    )
+else:
+    st.caption(
+        "只有点击按钮后才会发送本条结论和已批准、已授权的脱敏证据；"
+        "模型建议不改变四级核验结果。"
+    )
+    request_advice = st.button(
+        "请求大模型辅助（仅使用脱敏证据）",
+        key=f"request_llm_{project_id}_{active_claim_id}",
+    )
+    evidence_ids = [
+        int(card["id"]) for card in linked_cards if card.get("id") is not None
+    ]
+    if request_advice:
+        try:
+            with st.spinner("正在请求大模型辅助建议……"):
+                advice = request_claim_assistance(
+                    claim.get("claim_text", ""),
+                    claim,
+                    linked_cards,
+                    config=llm_settings,
+                )
+            advice_data = advice.as_dict()
+            st.session_state[advice_key] = advice_data
+            db.create_agent_run(
+                project_id,
+                "llm_claim_assistance",
+                claim_id=int(active_claim_id),
+                input_data={
+                    "claim_text": claim.get("claim_text", ""),
+                    "claim_checked_at": claim.get("checked_at"),
+                    "evidence_ids": evidence_ids,
+                    "model": llm_settings.model,
+                },
+                output_data=advice_data,
+            )
+        except LLMConfigurationError as exc:
+            st.warning(str(exc))
+        except LLMError as exc:
+            st.error(f"大模型辅助失败：{exc}")
+            db.create_agent_run(
+                project_id,
+                "llm_claim_assistance",
+                claim_id=int(active_claim_id),
+                status="failed",
+                input_data={
+                    "claim_text": claim.get("claim_text", ""),
+                    "claim_checked_at": claim.get("checked_at"),
+                    "evidence_ids": evidence_ids,
+                    "model": llm_settings.model,
+                },
+                error_message=str(exc)[:500],
+            )
+        except Exception as exc:
+            st.error(f"大模型辅助失败：{exc}")
+
+
+if advice_data:
+    render_claim_advice(advice_data, persisted=advice_persisted)
 
 st.markdown("### 检索诊断")
 retrieval_run = db.get_latest_claim_run(
@@ -348,13 +472,13 @@ if tasks:
 st.markdown("### 补证与重新核验")
 if demo_mode:
     st.caption(
-        "下面的补充材料也是虚构测试数据，并提供一个与原结论方向不同的观点，"
-        "用于测试结论状态如何随证据变化。"
+        "下面的补充材料提供一个与原结论方向不同的观点，"
+        "用于观察结论状态如何随证据变化。"
     )
     action_left, action_right = st.columns(2)
     with action_left:
         add_supplement = st.button(
-            "加入虚构的不同观点材料",
+            "加入不同观点材料",
             type="primary",
             width="stretch",
         )
@@ -377,13 +501,13 @@ else:
 
 if add_supplement:
     try:
-        with st.spinner("正在加入虚构补充材料……"):
+        with st.spinner("正在加入补充材料……"):
             supplement = add_demo_supplement(db, project_id)
     except Exception as exc:
         st.error(f"补充材料添加失败：{exc}")
     else:
         material_id = getattr(supplement, "material_id", supplement)
-        st.success(f"虚构补充材料 M{material_id} 已加入，并已完成对应补证任务。")
+        st.success(f"补充材料 M{material_id} 已加入，并已完成对应补证任务。")
         st.info("现在点击“重新核验当前结论”，观察是否出现相反证据。")
 
 if rerun_check:

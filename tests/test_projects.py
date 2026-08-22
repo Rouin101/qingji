@@ -114,7 +114,7 @@ class ProjectWorkspaceTests(unittest.TestCase):
             lambda: rename_project_workspace(self.db, demo_id, "新名称"),
             lambda: archive_project_workspace(self.db, demo_id),
         ):
-            with self.assertRaisesRegex(ValueError, "内置虚构测试项目"):
+            with self.assertRaisesRegex(ValueError, "内置项目"):
                 operation()
 
     def test_permanent_delete_requires_archive_and_exact_name(self) -> None:

@@ -36,12 +36,12 @@ from .models import (
 from .privacy import redact_text
 from .retrieval import evidence_candidate_from_mapping
 
-#: Explicit note attached only when an imported material is marked fictional.
-_FICTION_NOTE = "虚构测试数据：用户导入，仅用于青迹功能演示，不对应真实个人或调研结论。"
+#: Explicit note attached only when an imported material is marked as an example.
+_FICTION_NOTE = "该材料已标记为内部示例，不应当作真实调研结论。"
 
 _TASK_RECOMMENDATION = (
     "优先补充已获得记录与使用授权的材料，并明确其来源角色、采集场景与采集日期。"
-    "如使用虚构测试材料，必须清楚标注且不得当作真实调研结论。"
+    "请确保材料来源和事实属性记录准确，不要将未经核实的内容当作真实调研结论。"
 )
 
 _MAX_CLAIM_LENGTH = 500

@@ -337,7 +337,7 @@ def _validate_source_relations(payload: Mapping[str, Any]) -> None:
             raise ValueError(f"备份包中的 {table} 跨越了项目边界。")
     for row in tables["materials"]:
         if row.get("is_fictional") not in (0, 1, False, True):
-            raise ValueError("备份包中的材料虚构标记无效。")
+            raise ValueError("备份包中的材料来源标记无效。")
     for row in tables["segments"]:
         if _positive_int(row.get("material_id"), "材料") not in material_ids:
             raise ValueError("备份包中的片段材料引用无效。")

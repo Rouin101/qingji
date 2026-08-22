@@ -39,7 +39,7 @@ class WorkflowTestCase(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.db = Database(Path(self.temp_dir.name) / "test.db")
         self.db.initialize()
-        self.project_id = self.db.create_project("虚构测试项目", "仅供功能测试")
+        self.project_id = self.db.create_project("数字便民服务体验调研", "项目材料整理")
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
@@ -92,7 +92,7 @@ class WorkflowTestCase(unittest.TestCase):
         self.assertEqual(material["consent_status"], "confirmed")
         self.assertEqual(material["processing_status"], "ready")
         self.assertEqual(material["is_fictional"], 1)
-        self.assertIn("虚构测试数据", material["notes"])
+        self.assertIn("内部示例", material["notes"])
 
         segments = self.db.list_segments(result.material_id)
         self.assertGreaterEqual(len(segments), 1)

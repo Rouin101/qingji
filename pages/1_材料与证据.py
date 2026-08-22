@@ -6,6 +6,8 @@ from datetime import date
 
 import streamlit as st
 
+from qingji.config import llm_settings
+from qingji.llm import LLMError, request_evidence_assistance
 from qingji.models import ConsentStatus
 from qingji.ui import (
     CONSENT_LABELS,
@@ -16,10 +18,10 @@ from qingji.ui import (
     evidence_card_html,
     format_datetime,
     get_demo_context,
-    is_demo_project,
     render_demo_banner,
     render_page_intro,
     render_sidebar_note,
+    render_workflow_steps,
 )
 from qingji.workflow import import_text_material, review_evidence_card
 
@@ -86,6 +88,28 @@ def render_review_history(db, project_id: int, evidence_card_id: int) -> None:
             )
 
 
+def render_evidence_advice(advice_data: dict, *, persisted: bool = False) -> None:
+    """Render model drafting suggestions without changing the evidence card."""
+
+    with st.container(border=True):
+        prefix = "已保存的模型草拟" if persisted else "模型草拟"
+        st.caption(
+            f"{prefix}（{advice_data.get('model') or '未标注'}）· 仅供人工审核"
+        )
+        st.markdown(f"**建议标题：** {advice_data.get('title') or '—'}")
+        st.markdown(f"**建议摘要：** {advice_data.get('summary') or '—'}")
+        suggested_type = advice_data.get("evidence_type")
+        st.caption(
+            "建议类型："
+            + EVIDENCE_TYPE_LABELS.get(suggested_type, suggested_type or "—")
+        )
+        uncertainties = advice_data.get("uncertainties") or []
+        if uncertainties:
+            st.markdown("**模型标记的不确定性：**")
+            for item in uncertainties:
+                st.markdown(f"- {item}")
+
+
 configure_page("材料与证据", "🗂️")
 
 try:
@@ -101,25 +125,32 @@ render_page_intro(
     "先说明材料从哪里来、是否获得授权，再让系统生成待人工审核的证据卡。",
 )
 render_demo_banner(project)
-demo_mode = is_demo_project(project)
+render_workflow_steps("materials")
+saved_evidence_advice: dict[int, dict] = {}
+for run in db.list_project_runs(
+    project_id, "llm_evidence_assistance", limit=200
+):
+    if run.get("status") != "completed":
+        continue
+    evidence_id = (run.get("input") or {}).get("evidence_id")
+    output = run.get("output") or {}
+    try:
+        evidence_id = int(evidence_id)
+    except (TypeError, ValueError):
+        continue
+    if evidence_id not in saved_evidence_advice and output:
+        saved_evidence_advice[evidence_id] = output
 
 tab_import, tab_review, tab_materials = st.tabs(
     ["导入文字材料", "审核证据卡", "材料清单"]
 )
 
 with tab_import:
-    if demo_mode:
-        st.markdown("### 导入新的测试材料")
-        st.caption(
-            "可粘贴文字，或上传 UTF-8 编码的 .txt/.md 文件。"
-            "当前是内置演示项目，请只使用虚构测试内容。"
-        )
-    else:
-        st.markdown("### 导入新的文字材料")
-        st.caption(
-            "可粘贴文字，或上传 UTF-8 编码的 .txt/.md 文件。"
-            "请如实填写材料属性和授权状态；未确认授权的材料不会进入核验。"
-        )
+    st.markdown("### 导入新的文字材料")
+    st.caption(
+        "可粘贴文字，或上传 UTF-8 编码的 .txt/.md 文件。"
+        "请如实填写来源、采集场景和授权状态；未确认授权的材料不会进入核验。"
+    )
 
     uploaded = st.file_uploader(
         "上传文字文件（可选）",
@@ -135,20 +166,11 @@ with tab_import:
             uploaded_error = "文件不是 UTF-8 编码，请转换编码后重试。"
             st.error(uploaded_error)
 
-    with st.form("material_import_form", clear_on_submit=True):
-        if demo_mode:
-            is_fictional = True
-        else:
-            material_nature = st.radio(
-                "材料属性",
-                options=["real", "fictional"],
-                format_func=lambda item: (
-                    "真实材料" if item == "real" else "虚构测试数据"
-                ),
-                horizontal=True,
-                help="真实材料必须有权记录和使用；虚构材料必须明确标注。",
-            )
-            is_fictional = material_nature == "fictional"
+    # Keep all fields after submission so validation errors never erase a
+    # partially completed material entry. Successful imports also remain
+    # visible until the user intentionally replaces them.
+    with st.form("material_import_form", clear_on_submit=False):
+        is_fictional = False
         initial_text = uploaded_text or st.session_state.get(
             "material_draft_text", ""
         )
@@ -157,7 +179,7 @@ with tab_import:
             value=initial_text,
             height=220,
             placeholder=(
-                "示例（虚构）：模拟受访者D表示，第一次进入平台时没有找到"
+                "例如：受访者D表示，第一次进入平台时没有找到"
                 "验证码输入位置，经志愿者提示后完成了操作……"
             ),
         )
@@ -168,24 +190,16 @@ with tab_import:
                 value=(
                     uploaded.name
                     if uploaded is not None
-                    else (
-                        "手工录入_虚构测试笔记.txt"
-                        if is_fictional
-                        else "手工录入_经授权记录.txt"
-                    )
+                    else "手工录入_项目记录.txt"
                 ),
             )
-            source_options = (
-                [
-                    "模拟受访者（虚构）",
-                    "模拟工作人员（虚构）",
-                    "模拟调研团队观察员",
-                    "虚构正式记录",
-                    "团队分析",
-                ]
-                if is_fictional
-                else ["受访者", "工作人员", "调研团队观察员", "正式记录", "团队分析"]
-            )
+            source_options = [
+                "受访者",
+                "工作人员",
+                "调研团队观察员",
+                "正式记录",
+                "团队分析",
+            ]
             source_role = st.selectbox(
                 "来源角色",
                 source_options,
@@ -195,32 +209,25 @@ with tab_import:
         with metadata_right:
             context = st.text_input(
                 "采集场景",
-                value=(
-                    "虚构的便民服务体验访谈，仅用于青迹功能测试"
-                    if is_fictional
-                    else ""
-                ),
+                value="",
                 placeholder="说明材料获取的时间、地点或活动场景",
             )
             consent_choice = st.radio(
                 "记录与使用授权",
                 options=["confirmed", "unknown", "denied"],
+                index=1,
                 format_func=lambda item: CONSENT_LABELS[item],
                 horizontal=True,
                 help="未确认或被拒绝授权的材料不会成为可引用证据。",
             )
             custom_terms_text = st.text_input(
                 "自定义敏感词（可选）",
-                placeholder="用逗号分隔，例如：虚构姓名, 虚构详细地址",
+                placeholder="用逗号分隔，例如：姓名, 详细地址",
                 help="适合标记姓名、精确住址或本项目特有身份信息。",
             )
 
         material_confirmed = st.checkbox(
-            (
-                "我确认本次提交的是虚构测试数据，不对应真实个人或真实调研结论。"
-                if is_fictional
-                else "我确认已如实填写授权状态，并会在引用或导出前复核脱敏文本。"
-            ),
+            "我确认已如实填写来源和授权状态，并会在引用或导出前复核脱敏文本。",
             value=False,
         )
         submitted = st.form_submit_button(
@@ -275,9 +282,31 @@ with tab_import:
                 st.code(result.redacted_text, language=None)
                 if consent_choice != "confirmed":
                     st.info("这份材料已保存，但在授权确认前不会进入结论核验。")
+                st.info(
+                    "下一步：打开上方“审核证据卡”标签，确认标题、摘要、类型和审核状态。"
+                )
 
 with tab_review:
     st.markdown("### 人工审核证据卡")
+    try:
+        all_cards = db.list_evidence_cards(project_id)
+    except Exception:
+        all_cards = []
+    if all_cards:
+        status_columns = st.columns(3)
+        status_columns[0].metric(
+            "待审核",
+            sum(card.get("review_status") == "draft" for card in all_cards),
+        )
+        status_columns[1].metric(
+            "已批准",
+            sum(card.get("review_status") == "approved" for card in all_cards),
+        )
+        status_columns[2].metric(
+            "授权待确认",
+            sum(card.get("consent_status") != "confirmed" for card in all_cards),
+        )
+        st.caption("只有“已确认授权 + 已批准”的证据卡会进入结论核验。")
     filter_columns = st.columns([1, 1, 2])
     with filter_columns[0]:
         review_filter = st.selectbox(
@@ -307,7 +336,10 @@ with tab_review:
         cards = []
 
     if not cards:
-        empty_state("当前筛选条件下没有证据卡。")
+        empty_state(
+            "当前筛选条件下没有证据卡。请先在“导入文字材料”标签提交材料，"
+            "或调整上方筛选条件。"
+        )
     for card in cards:
         card_id = int(card["id"])
         title = card.get("title") or f"证据 E{card_id}"
@@ -319,6 +351,57 @@ with tab_review:
             st.markdown(evidence_card_html(card), unsafe_allow_html=True)
             if card.get("consent_status") != "confirmed":
                 st.warning("来源材料尚未确认授权。即使批准，仍不会进入可引用证据集。")
+
+            evidence_advice_key = f"llm_evidence_advice_{project_id}_{card_id}"
+            advice_data = st.session_state.get(evidence_advice_key)
+            advice_persisted = False
+            if advice_data is None:
+                advice_data = saved_evidence_advice.get(card_id)
+                advice_persisted = advice_data is not None
+            if llm_settings.configured and card.get("consent_status") == "confirmed":
+                st.caption(
+                    "可请求模型草拟标题、摘要和证据类型；结果不会自动批准或保存。"
+                )
+                request_advice = st.button(
+                    "请求大模型草拟证据卡",
+                    key=f"request_evidence_llm_{project_id}_{card_id}",
+                )
+                if request_advice:
+                    try:
+                        with st.spinner("正在生成证据卡草拟建议……"):
+                            advice = request_evidence_assistance(
+                                card,
+                                config=llm_settings,
+                            )
+                        advice_data = advice.as_dict()
+                        st.session_state[evidence_advice_key] = advice_data
+                        db.create_agent_run(
+                            project_id,
+                            "llm_evidence_assistance",
+                            input_data={
+                                "evidence_id": card_id,
+                                "model": llm_settings.model,
+                            },
+                            output_data=advice_data,
+                        )
+                    except LLMError as exc:
+                        st.error(f"证据卡辅助失败：{exc}")
+                        db.create_agent_run(
+                            project_id,
+                            "llm_evidence_assistance",
+                            status="failed",
+                            input_data={
+                                "evidence_id": card_id,
+                                "model": llm_settings.model,
+                            },
+                            error_message=str(exc)[:500],
+                        )
+                if request_advice:
+                    advice_data = st.session_state.get(evidence_advice_key)
+                    advice_persisted = False
+
+            if advice_data:
+                render_evidence_advice(advice_data, persisted=advice_persisted)
 
             with st.form(f"evidence_edit_{card_id}"):
                 edited_title = st.text_input(
@@ -383,6 +466,7 @@ with tab_review:
                         else:
                             st.success(f"证据 E{card_id} 已更新。")
                         if review_result.review_event_id is not None:
+                            st.session_state.pop(evidence_advice_key, None)
                             st.rerun()
             try:
                 render_review_history(db, project_id, card_id)
@@ -399,10 +483,9 @@ with tab_materials:
     if not materials:
         empty_state("尚无材料。")
     for material in materials:
-        fictional = "虚构测试" if material.get("is_fictional") else "用户导入"
         with st.expander(
             f"M{material['id']} · "
-            f"{material.get('original_filename') or '未命名材料'} · {fictional}"
+            f"{material.get('original_filename') or '未命名材料'}"
         ):
             detail_columns = st.columns(3)
             detail_columns[0].markdown(

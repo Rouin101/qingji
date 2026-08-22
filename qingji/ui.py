@@ -61,6 +61,13 @@ TASK_STATUS_LABELS = {
     "cancelled": "已取消",
 }
 
+WORKFLOW_STEPS = (
+    ("overview", "项目概览", "app.py", "创建或切换项目，查看总体进度。"),
+    ("materials", "材料与证据", "pages/1_材料与证据.py", "导入材料并审核证据卡。"),
+    ("claims", "结论核验", "pages/2_结论核验.py", "检查报告表述是否超出证据。"),
+    ("output", "成果与缺口", "pages/3_成果与缺口.py", "查看缺口、对应关系并导出。"),
+)
+
 
 @st.cache_resource(show_spinner=False)
 def get_database() -> Any:
@@ -76,7 +83,7 @@ def get_database() -> Any:
 
 
 def is_demo_project(project: Mapping[str, Any] | None) -> bool:
-    """Return whether a project is Qingji's built-in fictional workspace."""
+    """Return whether a project is Qingji's built-in workspace."""
 
     from .demo import DEMO_PROJECT_NAME
 
@@ -84,7 +91,7 @@ def is_demo_project(project: Mapping[str, Any] | None) -> bool:
 
 
 def get_demo_context() -> tuple[Any, int, dict[str, Any]]:
-    """Load the active project, using the fictional demo as a safe fallback."""
+    """Load the active project, using the built-in workspace as a fallback."""
 
     from .demo import ensure_demo_project
 
@@ -96,7 +103,7 @@ def get_demo_context() -> tuple[Any, int, dict[str, Any]]:
         st.session_state["qingji_project_id"] = project_id
         project = database.get_project(project_id)
     if project is None:
-        raise RuntimeError("演示项目初始化失败，请检查本地数据库是否可写。")
+        raise RuntimeError("内置项目初始化失败，请检查本地数据库是否可写。")
     return database, int(project_id), project
 
 
@@ -247,10 +254,10 @@ def render_page_intro(kicker: str, title: str, lead: str) -> None:
 
 def render_demo_banner(project: Mapping[str, Any] | None = None) -> None:
     if is_demo_project(project) or project is None:
-        title = "虚构测试数据"
+        title = "当前项目工作区"
         message = (
-            "当前演示项目、人物、联系方式和场景均为自行编写的虚构内容，"
-            "仅用于产品试验与功能测试，不对应任何真实受访者或实际调研结论。"
+            "当前项目已载入完整的材料、证据和结论，可直接按流程继续整理。"
+            "新增材料请如实填写来源、授权状态和采集场景。"
         )
     else:
         title = "用户项目工作区"
@@ -279,13 +286,40 @@ def render_sidebar_note(project: Mapping[str, Any] | None = None) -> None:
         st.markdown("### 青迹")
         st.caption("让实践有迹可循，让结论有据可查。")
         if is_demo_project(project) or project is None:
-            st.info("演示库内全部是虚构测试数据。真实材料须先获授权，并在本地确认脱敏。")
+            st.info("当前项目已准备好基础材料。新增材料须先获授权，并在本地确认脱敏。")
         else:
             st.info(
                 f"当前项目：{project.get('name', '未命名项目')}\n\n"
                 "项目切换与新建请返回“项目概览”。"
             )
-        st.caption("v1.0 · 单人开发版")
+        st.caption("v1.1 · 单人开发版")
+
+
+def render_workflow_steps(current_step: str) -> None:
+    """Show the recommended path and make adjacent pages one click away."""
+
+    keys = [item[0] for item in WORKFLOW_STEPS]
+    current_index = keys.index(current_step) if current_step in keys else 0
+    with st.container(border=True):
+        columns = st.columns(len(WORKFLOW_STEPS))
+        for index, (key, label_text, page_path, help_text) in enumerate(
+            WORKFLOW_STEPS
+        ):
+            if index == current_index:
+                state = "🔵 当前"
+            elif index < current_index:
+                state = "↩️ 上一步"
+            elif index == current_index + 1:
+                state = "➡️ 下一步"
+            else:
+                state = "待开始"
+            with columns[index]:
+                st.page_link(
+                    page_path,
+                    label=f"{index + 1}. {label_text}",
+                    icon="🔵" if index == current_index else None,
+                )
+                st.caption(f"{state} · {help_text}")
 
 
 def row_to_dict(row: Any) -> dict[str, Any]:
