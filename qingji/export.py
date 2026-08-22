@@ -37,6 +37,12 @@ _REVIEW_FIELD_LABELS = {
     "review_status": "审核状态",
 }
 
+_TASK_STATUS_LABELS = {
+    "open": "待补证",
+    "done": "已完成",
+    "cancelled": "已取消",
+}
+
 
 def _row_dict(row: Any) -> dict[str, Any]:
     if row is None:
@@ -241,19 +247,28 @@ def render_project_markdown(
             )
         )
 
-    lines.extend(("## 未解决的补证任务", ""))
-    open_tasks = [
-        task for task in task_rows if _enum_value(task.get("status")) == "open"
-    ]
-    if not open_tasks:
-        lines.extend(("暂无未解决的补证任务。", ""))
-    for task in open_tasks:
+    lines.extend(("## 补证任务", ""))
+    if not task_rows:
+        lines.extend(("暂无补证任务。", ""))
+    for task in task_rows:
+        status = _enum_value(task.get("status"))
+        status_label = _TASK_STATUS_LABELS.get(status, status or "未知")
         lines.extend(
             (
-                f"- **{task.get('title') or '补充材料'}**（对应 C{task.get('claim_id', '—')}）",
+                f"- **{task.get('title') or '补充材料'}**（对应 C{task.get('claim_id', '—')} · {status_label}）",
                 f"  - 建议行动：{task.get('recommended_action') or '未记录'}",
             )
         )
+        if task.get("completion_material_filename"):
+            lines.append(
+                f"  - 完成材料：{_markdown_inline(task.get('completion_material_filename'))}"
+            )
+    open_tasks = [
+        task for task in task_rows if _enum_value(task.get("status")) == "open"
+    ]
+    lines.append(
+        f"当前未解决任务：{len(open_tasks)} 项。"
+    )
     lines.extend(
         (
             "",

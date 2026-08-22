@@ -119,6 +119,61 @@ class AppPageSmokeTest(unittest.TestCase):
         )
         self.assertTrue(any("已处理 2 个文件" in item.value for item in app.success))
 
+    def test_followup_task_can_be_completed_and_reopened(self) -> None:
+        database = get_database()
+        project_id = database.create_project("补证任务页面检查")
+        imported = import_text_material(
+            database,
+            project_id,
+            "受访者甲表示已完成线上申请。",
+            original_filename="补证完成材料.txt",
+            source_role="受访者",
+            context="补证任务页面检查场景",
+            captured_at="2026-08-22",
+            consent_status="confirmed",
+            custom_sensitive_terms=None,
+            is_fictional=False,
+        )
+        claim_id = database.create_claim(
+            project_id,
+            "待补证页面检查结论。",
+            reason="需要补充材料。",
+        )
+        task_id = database.create_followup_task(
+            claim_id,
+            "补充一份授权材料",
+            recommended_action="导入并确认一份材料。",
+        )
+
+        app = AppTest.from_file("app.py", default_timeout=30)
+        app.run()
+        app.session_state["qingji_project_id"] = project_id
+        app.switch_page("pages/3_成果与缺口.py")
+        app.run()
+
+        app.selectbox(key=f"completion_material_{task_id}").set_value(
+            imported.material_id
+        )
+        app.button(
+            key=f"FormSubmitter:complete_task_{task_id}-标记为已完成"
+        ).click()
+        app.run()
+
+        self.assertEqual(app.exception, [])
+        completed = database.get_followup_task(task_id)
+        self.assertEqual(completed["status"], "done")
+        self.assertEqual(
+            int(completed["completion_material_id"]), imported.material_id
+        )
+
+        app.button(key=f"reopen_task_{task_id}").click()
+        app.run()
+
+        self.assertEqual(app.exception, [])
+        reopened = database.get_followup_task(task_id)
+        self.assertEqual(reopened["status"], "open")
+        self.assertIsNone(reopened["completion_material_id"])
+
     def test_project_backup_can_be_generated_from_overview(self) -> None:
         app = AppTest.from_file("app.py", default_timeout=30)
         app.run()

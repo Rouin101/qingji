@@ -272,6 +272,31 @@ class WorkflowTestCase(unittest.TestCase):
         self.assertIn("已有支持", markdown)
         self.assertNotIn("13812345678", markdown)
 
+    def test_export_includes_followup_task_status_and_completion_material(self) -> None:
+        from qingji.export import export_project_markdown
+
+        imported = self._import(DIFFICULTY_TEXT)
+        stored = check_and_store_claim(self.db, self.project_id, SIMPLE_CLAIM)
+        task_id = self.db.create_followup_task(
+            stored.claim_id,
+            "导出任务状态",
+            recommended_action="补充并核对一份材料。",
+        )
+
+        open_markdown = export_project_markdown(self.db, self.project_id)
+        self.assertIn("## 补证任务", open_markdown)
+        self.assertIn("导出任务状态", open_markdown)
+        self.assertIn("待补证", open_markdown)
+
+        self.db.set_followup_task_status(
+            task_id,
+            "done",
+            completion_material_id=imported.material_id,
+        )
+        done_markdown = export_project_markdown(self.db, self.project_id)
+        self.assertIn("已完成", done_markdown)
+        self.assertIn("完成材料：", done_markdown)
+
     def test_withdrawing_approved_evidence_refreshes_claim_and_export(self) -> None:
         from qingji.export import export_project_markdown
 

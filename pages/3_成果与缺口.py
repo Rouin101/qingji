@@ -196,6 +196,9 @@ with tab_claims:
 
 with tab_tasks:
     st.markdown("### 补证任务")
+    completion_materials = db.list_materials(
+        project_id, consent_status="confirmed"
+    )
     status_filter = st.segmented_control(
         "任务状态",
         options=["all", "open", "done", "cancelled"],
@@ -212,21 +215,91 @@ with tab_tasks:
     if not filtered_tasks:
         empty_state("当前筛选条件下没有补证任务。")
     for task in filtered_tasks:
+        task_id = int(task["id"])
         status = TASK_STATUS_LABELS.get(task.get("status"), "未知")
-        st.markdown(
-            f"""
-            <div class="qj-card">
-              <div class="qj-card-label">T{task['id']} · {status}</div>
-              <strong>{task.get('title') or '补证任务'}</strong>
-              <div class="qj-meta">{task.get('recommended_action') or '—'}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        if task.get("completion_material_filename"):
-            st.caption(
-                f"完成材料：{task['completion_material_filename']}"
+        with st.container(border=True):
+            st.markdown(
+                f"**T{task_id} · {status} · {task.get('title') or '补证任务'}**"
             )
+            st.caption(
+                f"对应结论：C{task.get('claim_id', '—')} · "
+                f"{task.get('claim_text') or '—'}"
+            )
+            st.write(task.get("recommended_action") or "—")
+            if task.get("completion_material_filename"):
+                st.caption(
+                    f"完成材料：{task['completion_material_filename']}"
+                )
+
+            if task.get("status") == "open":
+                if completion_materials:
+                    material_options = [int(item["id"]) for item in completion_materials]
+                    material_by_id = {
+                        int(item["id"]): item for item in completion_materials
+                    }
+                    with st.form(f"complete_task_{task_id}"):
+                        selected_material_id = st.selectbox(
+                            "选择完成任务的材料",
+                            options=material_options,
+                            format_func=lambda item: (
+                                f"M{item} · "
+                                f"{material_by_id[item].get('original_filename') or '未命名材料'}"
+                            ),
+                            key=f"completion_material_{task_id}",
+                            help="只显示当前项目中已确认授权的材料。",
+                        )
+                        complete_submitted = st.form_submit_button(
+                            "标记为已完成",
+                            type="primary",
+                        )
+                    if complete_submitted:
+                        try:
+                            db.set_followup_task_status(
+                                task_id,
+                                "done",
+                                completion_material_id=int(selected_material_id),
+                            )
+                        except Exception as exc:
+                            st.error(f"更新补证任务失败：{exc}")
+                        else:
+                            st.success(f"补证任务 T{task_id} 已完成。")
+                            st.rerun()
+                else:
+                    st.warning(
+                        "当前项目还没有已确认授权的材料。请先导入并确认材料，再完成此任务。"
+                    )
+                    st.page_link(
+                        "pages/1_材料与证据.py",
+                        label="去材料与证据导入完成材料",
+                        icon="🗂️",
+                    )
+                if st.button(
+                    "取消任务",
+                    key=f"cancel_task_{task_id}",
+                ):
+                    try:
+                        db.set_followup_task_status(task_id, "cancelled")
+                    except Exception as exc:
+                        st.error(f"更新补证任务失败：{exc}")
+                    else:
+                        st.success(f"补证任务 T{task_id} 已取消。")
+                        st.rerun()
+            else:
+                if st.button(
+                    "重新打开任务",
+                    key=f"reopen_task_{task_id}",
+                ):
+                    try:
+                        db.update_followup_task(
+                            task_id,
+                            status="open",
+                            completion_material_id=None,
+                        )
+                    except Exception as exc:
+                        st.error(f"重新打开补证任务失败：{exc}")
+                    else:
+                        st.success(f"补证任务 T{task_id} 已重新打开。")
+                        st.rerun()
 
 with tab_mapping:
     st.markdown("### 结论—证据对应表")
