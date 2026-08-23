@@ -10,7 +10,9 @@ from qingji.llm import (
     LLMResponseError,
     build_claim_assistance_prompt,
     build_evidence_assistance_prompt,
+    build_evidence_review_prompt,
     probe_llm_connection,
+    request_evidence_review,
     request_evidence_assistance,
     request_claim_assistance,
 )
@@ -277,6 +279,88 @@ class LLMTests(unittest.TestCase):
                     "consent_status": "confirmed",
                     "quote": "操作时需要帮助。",
                     "evidence_type": "interview_statement",
+                },
+                config=_config(),
+                post_json=fake_post,
+            )
+
+    def test_evidence_review_prompt_is_redacted_and_requires_consent(self) -> None:
+        with self.assertRaises(ValueError):
+            build_evidence_review_prompt(
+                {"id": 1, "consent_status": "unknown", "quote": "不应发送"}
+            )
+
+        prompt = build_evidence_review_prompt(
+            {
+                "id": 1,
+                "consent_status": "confirmed",
+                "title": "受访者 test@example.com",
+                "summary": "手机号 13812345678",
+                "quote": "身份证 110101199001011234，使用时遇到困难。",
+                "evidence_type": "interview_statement",
+                "source_role": "受访者",
+                "context": "访谈",
+            }
+        )
+        self.assertNotIn("test@example.com", prompt)
+        self.assertNotIn("13812345678", prompt)
+        self.assertNotIn("110101199001011234", prompt)
+        self.assertIn("review_status", prompt)
+
+    def test_evidence_review_returns_bounded_status(self) -> None:
+        def fake_post(url, headers, payload, timeout):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                '{"review_status":"approved",'
+                                '"review_reason":"来源和片段边界清楚。",'
+                                '"uncertainties":["仅代表该受访者"]}'
+                            )
+                        }
+                    }
+                ]
+            }
+
+        advice = request_evidence_review(
+            {
+                "id": 7,
+                "consent_status": "confirmed",
+                "title": "平台体验",
+                "summary": "需要帮助",
+                "quote": "操作时需要帮助。",
+                "evidence_type": "interview_statement",
+            },
+            config=_config(),
+            post_json=fake_post,
+        )
+        self.assertEqual(advice.review_status, "approved")
+        self.assertEqual(advice.review_reason, "来源和片段边界清楚。")
+        self.assertEqual(advice.uncertainties, ("仅代表该受访者",))
+
+    def test_evidence_review_rejects_unknown_status(self) -> None:
+        def fake_post(url, headers, payload, timeout):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                '{"review_status":"draft",'
+                                '"review_reason":"需要人工确认",'
+                                '"uncertainties":[]}'
+                            )
+                        }
+                    }
+                ]
+            }
+
+        with self.assertRaises(LLMResponseError):
+            request_evidence_review(
+                {
+                    "id": 7,
+                    "consent_status": "confirmed",
+                    "quote": "操作时需要帮助。",
                 },
                 config=_config(),
                 post_json=fake_post,

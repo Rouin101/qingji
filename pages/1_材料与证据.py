@@ -8,7 +8,11 @@ import streamlit as st
 
 from qingji.config import llm_settings
 from qingji.document import DocumentImportError, extract_uploaded_text
-from qingji.llm import LLMError, request_evidence_assistance
+from qingji.llm import (
+    LLMError,
+    request_evidence_assistance,
+    request_evidence_review,
+)
 from qingji.models import ConsentStatus
 from qingji.ui import (
     CONSENT_LABELS,
@@ -450,6 +454,150 @@ with tab_review:
             sum(card.get("consent_status") != "confirmed" for card in all_cards),
         )
         st.caption("只有“已确认授权 + 已批准”的证据卡会进入结论核验。")
+
+    authorized_draft_cards = [
+        card
+        for card in all_cards
+        if card.get("review_status") == "draft"
+        and card.get("consent_status") == "confirmed"
+    ]
+    unauthorized_draft_count = sum(
+        card.get("review_status") == "draft"
+        and card.get("consent_status") != "confirmed"
+        for card in all_cards
+    )
+    with st.expander("批量审核工具", expanded=False):
+        st.caption(
+            f"当前有 {len(authorized_draft_cards)} 张已确认授权的待审核卡片。"
+            "未确认授权的卡片不会进入可引用证据集，也不会发送给模型。"
+        )
+        manual_confirmation = st.checkbox(
+            "我确认这些已授权卡片的来源和脱敏结果可以进入项目证据集。",
+            key=f"bulk_review_confirm_{project_id}",
+        )
+        manual_bulk = st.button(
+            "一键批准全部已授权待审核卡片",
+            type="primary",
+            disabled=not manual_confirmation or not authorized_draft_cards,
+            key=f"bulk_approve_evidence_{project_id}",
+        )
+        if manual_bulk:
+            failures: list[str] = []
+            updated_count = 0
+            rechecked_claim_ids: set[int] = set()
+            for card in authorized_draft_cards:
+                try:
+                    result = review_evidence_card(
+                        db,
+                        int(card["id"]),
+                        title=str(card.get("title") or "").strip(),
+                        summary=str(card.get("summary") or "").strip(),
+                        evidence_type=card.get("evidence_type", "team_analysis"),
+                        review_status="approved",
+                        change_reason="",
+                    )
+                except Exception as exc:
+                    failures.append(f"E{card['id']}：{exc}")
+                else:
+                    if result.review_event_id is not None:
+                        updated_count += 1
+                    rechecked_claim_ids.update(result.rechecked_claim_ids)
+            if updated_count:
+                st.success(
+                    f"已批准 {updated_count} 张证据卡。"
+                    f"重新核验结论 {len(rechecked_claim_ids)} 条。"
+                )
+            if unauthorized_draft_count:
+                st.warning(
+                    f"另有 {unauthorized_draft_count} 张材料未确认授权，已跳过。"
+                )
+            if failures:
+                st.error("以下卡片未能完成批量审核：" + "；".join(failures))
+            st.rerun()
+
+        if llm_settings.configured:
+            st.divider()
+            st.caption(
+                "模型只会读取再次脱敏后的已授权证据卡，并返回批准或拒绝建议。"
+                "勾选确认后，模型结果会直接写入审核状态。"
+            )
+            trust_model = st.checkbox(
+                "我确认信任本次大模型审核结果，并允许其自动写入审核状态。",
+                key=f"trust_llm_review_{project_id}",
+            )
+            model_bulk = st.button(
+                "让大模型审核全部待审核卡片",
+                type="primary",
+                disabled=not trust_model or not authorized_draft_cards,
+                key=f"llm_review_all_evidence_{project_id}",
+            )
+            if model_bulk:
+                model_failures: list[str] = []
+                approved_count = 0
+                rejected_count = 0
+                rechecked_claim_ids: set[int] = set()
+                with st.spinner(
+                    f"正在让模型审核 {len(authorized_draft_cards)} 张证据卡……"
+                ):
+                    for card in authorized_draft_cards:
+                        run_input = {
+                            "evidence_id": int(card["id"]),
+                            "model": llm_settings.model,
+                            "review_source": "bulk",
+                        }
+                        try:
+                            advice = request_evidence_review(
+                                card,
+                                config=llm_settings,
+                            )
+                            advice_data = advice.as_dict()
+                            db.create_agent_run(
+                                project_id,
+                                "llm_evidence_review",
+                                input_data=run_input,
+                                output_data=advice_data,
+                            )
+                            result = review_evidence_card(
+                                db,
+                                int(card["id"]),
+                                title=str(card.get("title") or "").strip(),
+                                summary=str(card.get("summary") or "").strip(),
+                                evidence_type=card.get(
+                                    "evidence_type", "team_analysis"
+                                ),
+                                review_status=advice.review_status,
+                                change_reason=advice.review_reason,
+                            )
+                        except Exception as exc:
+                            model_failures.append(f"E{card['id']}：{exc}")
+                            try:
+                                db.create_agent_run(
+                                    project_id,
+                                    "llm_evidence_review",
+                                    status="failed",
+                                    input_data=run_input,
+                                    error_message=str(exc)[:500],
+                                )
+                            except Exception:
+                                pass
+                        else:
+                            rechecked_claim_ids.update(result.rechecked_claim_ids)
+                            if advice.review_status == "approved":
+                                approved_count += 1
+                            else:
+                                rejected_count += 1
+                st.success(
+                    f"模型审核完成：批准 {approved_count} 张，"
+                    f"拒绝 {rejected_count} 张，"
+                    f"重新核验结论 {len(rechecked_claim_ids)} 条。"
+                )
+                if model_failures:
+                    st.error("以下卡片模型审核失败：" + "；".join(model_failures))
+                st.rerun()
+        else:
+            st.info(
+                "尚未配置可用的大模型。配置 DeepSeek 后，这里会出现批量模型审核入口。"
+            )
     filter_columns = st.columns([1, 1, 2])
     with filter_columns[0]:
         review_filter = st.selectbox(
@@ -489,7 +637,7 @@ with tab_review:
         with st.expander(
             f"E{card_id} · {title} · "
             f"{REVIEW_STATUS_LABELS.get(card.get('review_status'), '未知')}",
-            expanded=card.get("review_status") == "draft",
+            expanded=False,
         ):
             st.markdown(evidence_card_html(card), unsafe_allow_html=True)
             if card.get("consent_status") != "confirmed":
@@ -562,18 +710,21 @@ with tab_review:
                     format_func=lambda item: EVIDENCE_TYPE_LABELS[item],
                     key=f"type_{card_id}",
                 )
+                current_decision = card.get("review_status", "draft")
+                if current_decision == "draft":
+                    current_decision = "approved"
                 decision = st.radio(
                     "审核结论",
                     ["draft", "approved", "rejected"],
                     index=["draft", "approved", "rejected"].index(
-                        card.get("review_status", "draft")
+                        current_decision
                     ),
                     format_func=lambda item: REVIEW_STATUS_LABELS[item],
                     horizontal=True,
                     key=f"decision_{card_id}",
                 )
                 change_reason = st.text_area(
-                    "本次审核说明（实际变更时必填）",
+                    "本次审核说明（可选）",
                     placeholder="例如：已核对来源与授权，批准进入可引用证据集。",
                     max_chars=500,
                     key=f"review_reason_{card_id}",

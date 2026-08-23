@@ -76,6 +76,62 @@ class AppPageSmokeTest(unittest.TestCase):
         self.assertEqual(app.text_area[0].value, draft_text)
         self.assertTrue(any("采集场景" in item.value for item in app.error))
 
+    def test_evidence_review_defaults_to_approved(self) -> None:
+        database = get_database()
+        project_id = database.create_project("证据审核默认状态检查")
+        imported = import_text_material(
+            database,
+            project_id,
+            "受访者表示线上办事时需要人工帮助。",
+            original_filename="审核默认状态.txt",
+            source_role="受访者",
+            context="审核默认状态检查场景",
+            captured_at="2026-08-23",
+            consent_status="confirmed",
+            custom_sensitive_terms=None,
+            is_fictional=False,
+        )
+        card_id = int(imported.evidence_card_ids[0])
+
+        app = AppTest.from_file("app.py", default_timeout=30)
+        app.run()
+        app.session_state["qingji_project_id"] = project_id
+        app.switch_page("pages/1_材料与证据.py")
+        app.run()
+
+        self.assertEqual(app.exception, [])
+        self.assertEqual(app.radio(key=f"decision_{card_id}").value, "approved")
+
+    def test_bulk_approval_approves_authorized_draft_cards(self) -> None:
+        database = get_database()
+        project_id = database.create_project("批量审核页面检查")
+        imported = import_text_material(
+            database,
+            project_id,
+            "受访者表示线上办事时需要人工帮助。",
+            original_filename="批量审核材料.txt",
+            source_role="受访者",
+            context="批量审核页面检查场景",
+            captured_at="2026-08-23",
+            consent_status="confirmed",
+            custom_sensitive_terms=None,
+            is_fictional=False,
+        )
+        card_id = int(imported.evidence_card_ids[0])
+
+        app = AppTest.from_file("app.py", default_timeout=30)
+        app.run()
+        app.session_state["qingji_project_id"] = project_id
+        app.switch_page("pages/1_材料与证据.py")
+        app.run()
+
+        app.checkbox(key=f"bulk_review_confirm_{project_id}").set_value(True)
+        app.button(key=f"bulk_approve_evidence_{project_id}").click()
+        app.run()
+
+        self.assertEqual(app.exception, [])
+        self.assertEqual(database.get_evidence_card(card_id)["review_status"], "approved")
+
     def test_claim_form_keeps_input_after_validation_error(self) -> None:
         app = self._open_claim_page()
         invalid_claim = "超出长度限制的结论。" * 80

@@ -354,16 +354,6 @@ class WorkflowTestCase(unittest.TestCase):
             is_fictional=True,
         )
         card = self.db.get_evidence_card(imported.evidence_card_ids[0])
-        with self.assertRaisesRegex(ValueError, "审核或修改的说明"):
-            review_evidence_card(
-                self.db,
-                int(card["id"]),
-                title=card["title"],
-                summary=card["summary"],
-                evidence_type=card["evidence_type"],
-                review_status="approved",
-                change_reason="",
-            )
         review = review_evidence_card(
             self.db,
             int(card["id"]),
@@ -371,11 +361,17 @@ class WorkflowTestCase(unittest.TestCase):
             summary=card["summary"],
             evidence_type=card["evidence_type"],
             review_status="approved",
-            change_reason="已核对来源与授权。",
+            change_reason="",
         )
 
         self.assertEqual(review.rechecked_claim_ids, (stored.claim_id,))
         self.assertIsNotNone(review.review_event_id)
+        self.assertEqual(
+            self.db.list_evidence_review_events(
+                self.project_id, evidence_card_id=int(card["id"])
+            )[0]["change_reason"],
+            "",
+        )
         self.assertEqual(
             self.db.get_claim(stored.claim_id)["verdict"], Verdict.SUPPORTED.value
         )

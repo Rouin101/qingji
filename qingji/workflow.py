@@ -459,9 +459,6 @@ def review_evidence_card(
             rechecked_claim_ids=(),
             review_event_id=None,
         )
-    if not normalized_reason:
-        raise ValueError("请填写本次审核或修改的说明。")
-
     before_snapshot = {
         field: _status_value(current.get(field))
         for field in changes

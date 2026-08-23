@@ -1,8 +1,11 @@
-"""Opt-in model assistance for the claim-review workflow.
+"""Opt-in model assistance for the claim and evidence-review workflow.
 
 The deterministic rule evaluator remains the source of the persisted verdict.
-This module only produces advisory wording after an explicit user action.  It
-uses an OpenAI-compatible chat-completions endpoint so the provider can be
+This module produces bounded, structured suggestions after an explicit user
+action.  A separate bulk evidence-review contract can recommend ``approved``
+or ``rejected``; the UI only applies those recommendations after an explicit
+trust confirmation and the storage workflow still enforces project boundaries.
+It uses an OpenAI-compatible chat-completions endpoint so the provider can be
 changed through environment variables without changing the product logic.
 
 Only approved, confirmed evidence-card fields are placed in the request.  The
@@ -78,6 +81,24 @@ class EvidenceAdvice:
             "title": self.title,
             "summary": self.summary,
             "evidence_type": self.evidence_type,
+            "uncertainties": list(self.uncertainties),
+            "model": self.model,
+        }
+
+
+@dataclass(frozen=True)
+class EvidenceReviewAdvice:
+    """A bounded model recommendation for one evidence-card review."""
+
+    review_status: str
+    review_reason: str
+    uncertainties: tuple[str, ...]
+    model: str
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "review_status": self.review_status,
+            "review_reason": self.review_reason,
             "uncertainties": list(self.uncertainties),
             "model": self.model,
         }
@@ -470,6 +491,93 @@ def request_evidence_assistance(
         post_json=post,
     )
     return _parse_evidence_advice(response, model=current.model)
+
+
+def build_evidence_review_prompt(
+    evidence_row: Mapping[str, Any],
+    *,
+    max_context_chars: int = 12000,
+) -> str:
+    """Build a redacted prompt for a model recommendation on one card."""
+
+    if _status(evidence_row.get("consent_status")) != ConsentStatus.CONFIRMED.value:
+        raise ValueError("未确认授权的材料不能请求模型审核。")
+    quote = _clean_text(evidence_row.get("quote"), limit=1800)
+    if not quote:
+        raise ValueError("证据卡缺少可供审核的脱敏原文片段。")
+    source = {
+        "evidence_id": int(evidence_row["id"]),
+        "title": _clean_text(evidence_row.get("title"), limit=300),
+        "summary": _clean_text(evidence_row.get("summary"), limit=800),
+        "quote": quote,
+        "evidence_type": _clean_text(evidence_row.get("evidence_type"), limit=100),
+        "source_role": _clean_text(evidence_row.get("source_role"), limit=100),
+        "context": _clean_text(evidence_row.get("context"), limit=200),
+    }
+    prompt = (
+        "你是青迹的证据卡审核模块。请只根据给定的脱敏证据卡判断它是否适合"
+        "作为当前项目的可引用证据。不得补造人物、数字、时间、地点或因果关系；"
+        "不能因为文字通顺就批准；团队分析不能单独证明事实；信息不足或存在"
+        "明显问题时请选择 rejected。只返回一个 JSON 对象，不要 Markdown 围栏。\n\n"
+        "JSON 字段必须为：review_status（只能是 approved 或 rejected）、"
+        "review_reason（不超过 300 字）、uncertainties（最多 8 条）。\n\n"
+        f"证据卡：{json.dumps(source, ensure_ascii=False)}"
+    )
+    return prompt[:max_context_chars]
+
+
+def _parse_evidence_review_advice(
+    response: Mapping[str, Any],
+    *,
+    model: str,
+) -> EvidenceReviewAdvice:
+    choices = response.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise LLMResponseError("模型响应缺少 choices 内容。")
+    first = choices[0]
+    message = first.get("message") if isinstance(first, Mapping) else None
+    content = message.get("content") if isinstance(message, Mapping) else None
+    if not isinstance(content, str):
+        raise LLMResponseError("模型响应缺少文本内容。")
+    data = _extract_json_object(content)
+    review_status = _clean_text(data.get("review_status"), limit=30)
+    if review_status not in {ReviewStatus.APPROVED.value, ReviewStatus.REJECTED.value}:
+        raise LLMResponseError("模型审核状态必须是 approved 或 rejected。")
+    return EvidenceReviewAdvice(
+        review_status=review_status,
+        review_reason=_clean_text(data.get("review_reason"), limit=300),
+        uncertainties=_string_list(data.get("uncertainties"), field="uncertainties"),
+        model=model,
+    )
+
+
+def request_evidence_review(
+    evidence_row: Mapping[str, Any],
+    *,
+    config: LLMSettings | None = None,
+    post_json: Callable[
+        [str, Mapping[str, str], Mapping[str, Any], float], Mapping[str, Any]
+    ] | None = None,
+) -> EvidenceReviewAdvice:
+    """Request one bounded model recommendation for an evidence-card review."""
+
+    current = config or llm_settings
+    if not current.configured:
+        raise LLMConfigurationError(
+            "尚未启用大模型审核。请配置 QINGJI_LLM_ENABLED、"
+            "QINGJI_LLM_API_KEY 和 QINGJI_LLM_MODEL。"
+        )
+    prompt = build_evidence_review_prompt(
+        evidence_row,
+        max_context_chars=current.max_context_chars,
+    )
+    post = post_json or _default_post_json
+    response = _call_chat_completion(
+        prompt,
+        config=current,
+        post_json=post,
+    )
+    return _parse_evidence_review_advice(response, model=current.model)
 
 
 def probe_llm_connection(

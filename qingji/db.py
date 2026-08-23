@@ -787,11 +787,9 @@ class Database:
         change_reason: str,
         rechecked_claim_ids: Sequence[int] = (),
     ) -> int:
-        """Append one immutable human-review event for an evidence card."""
+        """Append one immutable evidence-review event for an evidence card."""
 
         reason = str(change_reason or "").strip()
-        if not reason:
-            raise ValueError("证据审核说明不能为空。")
         if len(reason) > 500:
             raise ValueError("证据审核说明不能超过 500 字。")
         normalized_claim_ids = list(dict.fromkeys(int(item) for item in rechecked_claim_ids))
