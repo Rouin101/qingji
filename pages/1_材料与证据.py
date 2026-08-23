@@ -20,6 +20,7 @@ from qingji.ui import (
     format_datetime,
     get_demo_context,
     render_demo_banner,
+    render_next_action,
     render_page_intro,
     render_sidebar_note,
     render_workflow_steps,
@@ -135,6 +136,11 @@ render_page_intro(
 )
 render_demo_banner(project)
 render_workflow_steps("materials")
+render_next_action(
+    db.get_project_stats(project_id),
+    heading="材料处理进度",
+    current_step="materials",
+)
 saved_evidence_advice: dict[int, dict] = {}
 for run in db.list_project_runs(
     project_id, "llm_evidence_assistance", limit=200

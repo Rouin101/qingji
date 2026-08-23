@@ -69,6 +69,13 @@ WORKFLOW_STEPS = (
 )
 
 
+NEXT_ACTION_PAGES = {
+    "materials": "pages/1_材料与证据.py",
+    "claims": "pages/2_结论核验.py",
+    "output": "pages/3_成果与缺口.py",
+}
+
+
 @st.cache_resource(show_spinner=False)
 def get_database() -> Any:
     """Return one initialized database handle per Streamlit process."""
@@ -276,21 +283,86 @@ def render_demo_banner(project: Mapping[str, Any] | None = None) -> None:
     )
 
 
-def _next_step_hint(progress: Mapping[str, Any]) -> str:
+def get_next_action(progress: Mapping[str, Any]) -> dict[str, str]:
+    """Return one concrete next action for the current project state."""
+
     materials = int(progress.get("materials", 0) or 0)
     evidence_cards = int(progress.get("evidence_cards", 0) or 0)
     approved_cards = int(progress.get("approved_evidence_cards", 0) or 0)
     claims = int(progress.get("claims", 0) or 0)
     open_tasks = int(progress.get("open_followup_tasks", 0) or 0)
     if materials == 0:
-        return "下一步：导入一份文字材料"
+        return {
+            "key": "materials",
+            "title": "导入一份文字材料",
+            "detail": "填写来源、场景和授权信息，先把材料放进当前项目。",
+            "button": "去导入材料",
+            "page": NEXT_ACTION_PAGES["materials"],
+        }
+    if evidence_cards == 0:
+        return {
+            "key": "materials",
+            "title": "完成材料检查并生成证据卡",
+            "detail": "当前还没有证据卡；请先完成本地脱敏确认。",
+            "button": "去处理材料",
+            "page": NEXT_ACTION_PAGES["materials"],
+        }
     if evidence_cards > approved_cards:
-        return "下一步：审核待处理的证据卡"
+        return {
+            "key": "materials",
+            "title": "审核待处理的证据卡",
+            "detail": "只有已确认授权且已批准的证据，才能进入结论核验。",
+            "button": "去审核证据卡",
+            "page": NEXT_ACTION_PAGES["materials"],
+        }
     if claims == 0:
-        return "下一步：核验一句准备写入报告的话"
+        return {
+            "key": "claims",
+            "title": "核验一句准备写入报告的话",
+            "detail": "输入一句事实性表述，查看它目前能被证据支持到什么程度。",
+            "button": "去开始核验",
+            "page": NEXT_ACTION_PAGES["claims"],
+        }
     if open_tasks:
-        return "下一步：补充材料后重新核验"
-    return "下一步：查看成果并导出"
+        return {
+            "key": "output",
+            "title": "处理待补证任务",
+            "detail": "查看缺口、补充材料，再回到结论页重新核验。",
+            "button": "去查看补证任务",
+            "page": NEXT_ACTION_PAGES["output"],
+        }
+    return {
+        "key": "output",
+        "title": "查看成果并导出",
+        "detail": "核对结论—证据对应关系，确认无误后导出可信 Markdown。",
+        "button": "去查看成果",
+        "page": NEXT_ACTION_PAGES["output"],
+    }
+
+
+def _next_step_hint(progress: Mapping[str, Any]) -> str:
+    """Return the compact sidebar version of the next-action guidance."""
+
+    return f"下一步：{get_next_action(progress)['title']}"
+
+
+def render_next_action(
+    progress: Mapping[str, Any],
+    *,
+    heading: str = "建议下一步",
+    current_step: str | None = None,
+) -> None:
+    """Show one state-aware action instead of presenting every entry equally."""
+
+    action = get_next_action(progress)
+    with st.container(border=True):
+        st.markdown(f"#### {heading}")
+        st.markdown(f"**{action['title']}**")
+        st.caption(action["detail"])
+        if current_step == action["key"]:
+            st.caption("当前页面内即可完成这一步。")
+        else:
+            st.page_link(action["page"], label=action["button"], icon="➡️")
 
 
 def render_sidebar_note(
@@ -330,6 +402,8 @@ def render_sidebar_note(
                 f"待补证 {int(progress.get('open_followup_tasks', 0) or 0)}"
             )
             st.caption(_next_step_hint(progress))
+            action = get_next_action(progress)
+            st.page_link(action["page"], label=action["button"], icon="➡️")
         st.caption("v1.2 · 开发版")
 
 

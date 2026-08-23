@@ -29,6 +29,7 @@ from qingji.ui import (
     is_demo_project,
     render_demo_banner,
     render_page_intro,
+    render_next_action,
     render_sidebar_note,
     render_workflow_steps,
     verdict_box,
@@ -355,39 +356,7 @@ for column, verdict in zip(
 ):
     column.metric(VERDICT_LABELS[verdict], verdict_stats.get(verdict, 0))
 
-st.markdown("### 从这里开始")
-left, right = st.columns(2)
-with left:
-    st.markdown(
-        """
-        <div class="qj-card">
-          <div class="qj-card-label">01 · 材料进入证据链</div>
-          <strong>导入一份文字材料</strong>
-          <div class="qj-meta">
-          填写来源和授权信息，在本地发现敏感内容，再人工审核证据卡。
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    if st.button("前往材料与证据", type="primary", width="stretch"):
-        st.switch_page("pages/1_材料与证据.py")
-
-with right:
-    st.markdown(
-        """
-        <div class="qj-card">
-          <div class="qj-card-label">02 · 检查报告表述</div>
-          <strong>核验一句准备写入报告的话</strong>
-          <div class="qj-meta">
-          查看四级判断、相关证据、稳妥改写，以及下一步应补什么材料。
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    if st.button("前往结论核验", type="primary", width="stretch"):
-        st.switch_page("pages/2_结论核验.py")
+render_next_action(stats, heading="当前项目的下一步", current_step="overview")
 
 st.markdown("### 最近一次核验")
 if not claims:

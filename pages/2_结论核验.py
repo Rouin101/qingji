@@ -18,6 +18,7 @@ from qingji.ui import (
     get_demo_context,
     is_demo_project,
     render_demo_banner,
+    render_next_action,
     render_page_intro,
     render_sidebar_note,
     render_workflow_steps,
@@ -89,6 +90,11 @@ render_page_intro(
 )
 render_demo_banner(project)
 render_workflow_steps("claims")
+render_next_action(
+    db.get_project_stats(project_id),
+    heading="核验进度",
+    current_step="claims",
+)
 demo_mode = is_demo_project(project)
 history_verdict_key = f"claim_history_verdict_{project_id}"
 history_query_key = f"claim_history_query_{project_id}"

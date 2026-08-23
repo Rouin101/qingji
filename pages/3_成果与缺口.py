@@ -22,6 +22,7 @@ from qingji.ui import (
     format_datetime,
     get_demo_context,
     render_demo_banner,
+    render_next_action,
     render_page_intro,
     render_sidebar_note,
     render_workflow_steps,
@@ -106,6 +107,11 @@ render_page_intro(
 )
 render_demo_banner(project)
 render_workflow_steps("output")
+render_next_action(
+    db.get_project_stats(project_id),
+    heading="成果处理进度",
+    current_step="output",
+)
 
 summary_columns = st.columns(4)
 summary_columns[0].metric("核验记录", len(claims))
