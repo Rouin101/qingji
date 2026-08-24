@@ -253,7 +253,7 @@ if archived_projects:
             archived_id = int(archived_project["id"])
             st.markdown(f"#### {archived_project['name']}")
             st.caption(archived_project.get("description") or "尚未填写项目说明。")
-            restore_col, delete_col = st.columns([1, 2])
+            restore_col, delete_col = st.columns(2)
             with restore_col:
                 if st.button(
                     "恢复项目",
@@ -271,38 +271,45 @@ if archived_projects:
                         st.success("项目已恢复。")
                         st.rerun()
             with delete_col:
-                with st.form(f"delete_project_{archived_id}"):
-                    delete_confirmation = st.text_input(
-                        "输入完整项目名称以永久删除",
-                        key=f"delete_name_{archived_id}",
-                    )
-                    delete_acknowledged = st.checkbox(
-                        "我理解数据库记录和本地材料文件将被永久删除",
-                        key=f"delete_ack_{archived_id}",
-                    )
-                    delete_submitted = st.form_submit_button(
-                        "永久删除",
-                    )
-                if delete_submitted:
-                    if not delete_acknowledged:
-                        st.error("请先确认理解永久删除的影响。")
-                    else:
-                        try:
-                            deletion = delete_project_workspace(
-                                db, archived_id, delete_confirmation
-                            )
-                        except ValueError as exc:
-                            st.error(str(exc))
-                        except Exception as exc:
-                            st.error(f"删除项目失败：{exc}")
+                with st.popover(
+                    "永久删除",
+                    use_container_width=True,
+                    key=f"delete_project_{archived_id}",
+                ):
+                    st.caption("此操作不可撤销，请完成确认后继续。")
+                    with st.form(f"delete_project_form_{archived_id}"):
+                        delete_confirmation = st.text_input(
+                            "输入完整项目名称",
+                            key=f"delete_name_{archived_id}",
+                        )
+                        delete_acknowledged = st.checkbox(
+                            "我理解数据库记录和本地材料文件将被永久删除",
+                            key=f"delete_ack_{archived_id}",
+                        )
+                        delete_submitted = st.form_submit_button(
+                            "确认永久删除",
+                            width="stretch",
+                        )
+                    if delete_submitted:
+                        if not delete_acknowledged:
+                            st.error("请先确认理解永久删除的影响。")
                         else:
-                            st.success(
-                                f"项目已永久删除，同时移除 "
-                                f"{deletion.removed_files} 个本地材料文件。"
-                            )
-                            for warning in deletion.warnings:
-                                st.warning(warning)
-                            st.rerun()
+                            try:
+                                deletion = delete_project_workspace(
+                                    db, archived_id, delete_confirmation
+                                )
+                            except ValueError as exc:
+                                st.error(str(exc))
+                            except Exception as exc:
+                                st.error(f"删除项目失败：{exc}")
+                            else:
+                                st.success(
+                                    f"项目已永久删除，同时移除 "
+                                    f"{deletion.removed_files} 个本地材料文件。"
+                                )
+                                for warning in deletion.warnings:
+                                    st.warning(warning)
+                                st.rerun()
             st.divider()
 
 st.markdown(f"### {project['name']}")

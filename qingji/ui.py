@@ -335,11 +335,6 @@ def render_sidebar_note(
         st.divider()
         st.markdown("### 青迹")
         st.caption("让实践有迹可循，让结论有据可查。")
-        if not (is_demo_project(project) or project is None):
-            st.info(
-                f"当前项目：{project.get('name', '未命名项目')}\n\n"
-                "项目切换与新建请返回“项目概览”。"
-            )
         if progress is not None:
             st.divider()
             st.markdown("### 当前进度")
@@ -352,6 +347,11 @@ def render_sidebar_note(
             st.caption(_next_step_hint(progress))
             action = get_next_action(progress)
             st.page_link(action["page"], label=action["button"], icon="➡️")
+        if not (is_demo_project(project) or project is None):
+            st.info(
+                f"当前项目：{project.get('name', '未命名项目')}\n\n"
+                "项目切换与新建请返回“项目概览”。"
+            )
         st.caption("v1.2 · 开发版")
 
 
