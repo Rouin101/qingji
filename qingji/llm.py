@@ -26,6 +26,7 @@ from .claims import detect_rule_flags
 from .config import LLMSettings, llm_settings
 from .models import ClaimEvaluation, ConsentStatus, EvidenceType, ReviewStatus
 from .privacy import redact_text
+from .retrieval import evidence_candidate_from_mapping, rank_evidence_with_explanations
 
 
 class LLMError(RuntimeError):
@@ -104,9 +105,59 @@ class EvidenceReviewAdvice:
         }
 
 
+@dataclass(frozen=True)
+class EvidenceReviewBatchAdvice:
+    """Model recommendations for a bounded batch of evidence cards."""
+
+    reviews: tuple[tuple[int, EvidenceReviewAdvice], ...]
+    model: str
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "model": self.model,
+            "reviews": [
+                {"evidence_id": evidence_id, **advice.as_dict()}
+                for evidence_id, advice in self.reviews
+            ],
+        }
+
+
+@dataclass(frozen=True)
+class ClaimEvidenceReviewItem:
+    """One model-labelled relation between a claim and an eligible card."""
+
+    evidence_id: int
+    relation: str
+    rationale: str
+
+
+@dataclass(frozen=True)
+class ClaimEvidenceReviewAdvice:
+    """Bounded model review of which cards directly support or conflict."""
+
+    reviews: tuple[ClaimEvidenceReviewItem, ...]
+    uncertainties: tuple[str, ...]
+    model: str
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "model": self.model,
+            "reviews": [
+                {
+                    "evidence_id": item.evidence_id,
+                    "relation": item.relation,
+                    "rationale": item.rationale,
+                }
+                for item in self.reviews
+            ],
+            "uncertainties": list(self.uncertainties),
+        }
+
+
 _MAX_CLAIM_CHARS = 500
 _MAX_FIELD_CHARS = 1200
 _MAX_LIST_ITEMS = 8
+_CLAIM_EVIDENCE_REVIEW_MAX_CARDS = 24
 
 
 def _status(value: Any) -> str:
@@ -220,6 +271,77 @@ def build_claim_assistance_prompt(
         f"规则判定：{json.dumps(evaluation_data, ensure_ascii=False)}\n"
         f"规则提醒：{json.dumps(list(rule_flags), ensure_ascii=False)}\n"
         "可引用证据（每行一个 JSON 对象）：\n"
+        f"{context}"
+    )
+    return prompt, allowed_ids
+
+
+def build_claim_evidence_review_prompt(
+    claim_text: str,
+    evidence_rows: Sequence[Mapping[str, Any]],
+    *,
+    max_context_chars: int = 12000,
+    max_cards: int = _CLAIM_EVIDENCE_REVIEW_MAX_CARDS,
+) -> tuple[str, set[int]]:
+    """Build a bounded prompt for model-assisted claim/evidence relations.
+
+    Local retrieval only limits the context size; it does not decide the
+    relation.  The model must label every card included in the prompt so an
+    accidental lexical match can be demoted to context.
+    """
+
+    claim = _clean_text(claim_text, limit=_MAX_CLAIM_CHARS)
+    if not claim:
+        raise ValueError("claim_text must not be empty")
+    if isinstance(max_cards, bool) or not isinstance(max_cards, int) or max_cards <= 0:
+        raise ValueError("max_cards must be a positive integer")
+
+    eligible = _eligible_evidence(evidence_rows)
+    candidates = [
+        evidence_candidate_from_mapping(
+            {
+                **row,
+                "id": row["evidence_id"],
+                "material_id": row.get("material_id", row["evidence_id"]),
+                "segment_id": row.get("segment_id", row["evidence_id"]),
+                "source_role": row.get("source_role", ""),
+                "context": row.get("context", ""),
+                "review_status": "approved",
+                "consent_status": "confirmed",
+            }
+        )
+        for row in eligible
+    ]
+    ranked = rank_evidence_with_explanations(claim, candidates, limit=max_cards)
+    by_id = {int(row["evidence_id"]): row for row in eligible}
+    selected = [by_id[int(match.candidate.id)] for match in ranked]
+    if not selected:
+        selected = eligible[:max_cards]
+
+    evidence_lines: list[str] = []
+    used_chars = 0
+    context_limit = max(800, max_context_chars - 1200)
+    for item in selected:
+        line = json.dumps(item, ensure_ascii=False, separators=(",", ":"))
+        if evidence_lines and used_chars + len(line) + 1 > context_limit:
+            break
+        evidence_lines.append(line)
+        used_chars += len(line) + 1
+    allowed_ids = {
+        int(json.loads(line)["evidence_id"]) for line in evidence_lines
+    }
+    context = "\n".join(evidence_lines) or "（没有可供复核的已审核、已授权证据）"
+    prompt = (
+        "你是青迹的证据关联复核模块，不是事实裁判。请只判断给定的、已经人工批准且"
+        "已确认授权的证据卡，是否直接支持、直接反驳当前结论，或只能作为背景。"
+        "不要因为共享一个关键词就判为支持；要检查对象、行为、范围、时间、场景和"
+        "语气是否真正对应。团队分析不能单独证明受访者事实。四级核验结果仍由本地"
+        "规则系统计算。请对每个给定 evidence_id 各返回一项；无法直接对应时返回 context。"
+        "只返回一个 JSON 对象，不要 Markdown 代码围栏。\n\n"
+        "JSON 字段必须为：evidence_reviews（数组，每项包含 evidence_id、relation、"
+        "rationale；relation 只能是 support、contradict、context）、uncertainties（最多 8 条）。\n\n"
+        f"待核验结论：{claim}\n"
+        "候选证据（每行一个 JSON 对象）：\n"
         f"{context}"
     )
     return prompt, allowed_ids
@@ -363,6 +485,113 @@ def _parse_advice(
         uncertainties=_string_list(data.get("uncertainties"), field="uncertainties"),
         cited_evidence_ids=tuple(cited_ids),
         model=model,
+    )
+
+
+def _response_content(response: Mapping[str, Any]) -> str:
+    choices = response.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise LLMResponseError("模型响应缺少 choices 内容。")
+    first = choices[0]
+    if not isinstance(first, Mapping):
+        raise LLMResponseError("模型响应内容格式不正确。")
+    message = first.get("message")
+    if not isinstance(message, Mapping):
+        raise LLMResponseError("模型响应缺少 message 内容。")
+    content = message.get("content")
+    if not isinstance(content, str):
+        raise LLMResponseError("模型响应缺少文本内容。")
+    return content
+
+
+def _parse_claim_evidence_review(
+    response: Mapping[str, Any],
+    *,
+    allowed_ids: set[int],
+    model: str,
+) -> ClaimEvidenceReviewAdvice:
+    data = _extract_json_object(_response_content(response))
+    raw_reviews = data.get("evidence_reviews")
+    if not isinstance(raw_reviews, list):
+        raise LLMResponseError("模型字段 evidence_reviews 必须是数组。")
+    relation_values = {"support", "contradict", "context"}
+    parsed: dict[int, ClaimEvidenceReviewItem] = {}
+    for raw_item in raw_reviews:
+        if not isinstance(raw_item, Mapping):
+            raise LLMResponseError("模型证据关联项格式不正确。")
+        try:
+            evidence_id = int(raw_item.get("evidence_id"))
+        except (TypeError, ValueError) as exc:
+            raise LLMResponseError("模型引用了非整数证据编号。") from exc
+        if evidence_id not in allowed_ids:
+            raise LLMResponseError(
+                f"模型引用了本次上下文之外的证据 E{evidence_id}。"
+            )
+        if evidence_id in parsed:
+            raise LLMResponseError(f"模型重复返回证据 E{evidence_id}。")
+        relation = _clean_text(raw_item.get("relation"), limit=30)
+        if relation not in relation_values:
+            raise LLMResponseError(
+                "模型证据关联关系必须是 support、contradict 或 context。"
+            )
+        rationale = _clean_text(raw_item.get("rationale"), limit=240)
+        parsed[evidence_id] = ClaimEvidenceReviewItem(
+            evidence_id=evidence_id,
+            relation=relation,
+            rationale=rationale,
+        )
+    # Omitted cards are deliberately demoted to context rather than allowing
+    # the old lexical relation to survive a user-confirmed model review.
+    for evidence_id in sorted(allowed_ids):
+        parsed.setdefault(
+            evidence_id,
+            ClaimEvidenceReviewItem(
+                evidence_id=evidence_id,
+                relation="context",
+                rationale="模型未将该卡片识别为直接支持或冲突证据。",
+            ),
+        )
+    return ClaimEvidenceReviewAdvice(
+        reviews=tuple(parsed[evidence_id] for evidence_id in sorted(parsed)),
+        uncertainties=_string_list(data.get("uncertainties"), field="uncertainties"),
+        model=model,
+    )
+
+
+def request_claim_evidence_review(
+    claim_text: str,
+    evidence_rows: Sequence[Mapping[str, Any]],
+    *,
+    config: LLMSettings | None = None,
+    post_json: Callable[
+        [str, Mapping[str, str], Mapping[str, Any], float], Mapping[str, Any]
+    ]
+    | None = None,
+) -> ClaimEvidenceReviewAdvice:
+    """Ask the model to classify direct claim/evidence relations."""
+
+    current = config or llm_settings
+    if not current.configured:
+        raise LLMConfigurationError(
+            "尚未启用大模型证据关联复核。请配置 QINGJI_LLM_ENABLED、"
+            "QINGJI_LLM_API_KEY 和 QINGJI_LLM_MODEL。"
+        )
+    prompt, allowed_ids = build_claim_evidence_review_prompt(
+        claim_text,
+        evidence_rows,
+        max_context_chars=current.max_context_chars,
+    )
+    if not allowed_ids:
+        raise LLMResponseError("当前没有可供模型复核的已审核、已授权证据。")
+    response = _call_chat_completion(
+        prompt,
+        config=current,
+        post_json=post_json or _default_post_json,
+    )
+    return _parse_claim_evidence_review(
+        response,
+        allowed_ids=allowed_ids,
+        model=current.model,
     )
 
 
@@ -526,6 +755,63 @@ def build_evidence_review_prompt(
     return prompt[:max_context_chars]
 
 
+def build_evidence_review_batch_prompt(
+    evidence_rows: Sequence[Mapping[str, Any]],
+    *,
+    max_context_chars: int = 12000,
+) -> tuple[str, set[int]]:
+    """Build one bounded prompt for several draft-card review decisions."""
+
+    eligible: list[dict[str, Any]] = []
+    for row in evidence_rows:
+        if _status(row.get("review_status")) != ReviewStatus.DRAFT.value:
+            continue
+        if _status(row.get("consent_status")) != ConsentStatus.CONFIRMED.value:
+            continue
+        try:
+            evidence_id = int(row["id"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        eligible.append(
+            {
+                "evidence_id": evidence_id,
+                "title": _clean_text(row.get("title"), limit=180),
+                "summary": _clean_text(row.get("summary"), limit=360),
+                "quote": _clean_text(row.get("quote"), limit=700),
+                "evidence_type": _clean_text(row.get("evidence_type"), limit=100),
+                "source_role": _clean_text(row.get("source_role"), limit=100),
+                "context": _clean_text(row.get("context"), limit=200),
+            }
+        )
+    if not eligible:
+        raise ValueError("没有可供模型审核的已确认授权待审核卡片。")
+
+    lines: list[str] = []
+    used_chars = 0
+    context_limit = max(800, max_context_chars - 900)
+    for item in eligible:
+        line = json.dumps(item, ensure_ascii=False, separators=(",", ":"))
+        if lines and used_chars + len(line) + 1 > context_limit:
+            break
+        lines.append(line)
+        used_chars += len(line) + 1
+    allowed_ids = {
+        int(json.loads(line)["evidence_id"]) for line in lines
+    }
+    prompt = (
+        "你是青迹的批量证据卡审核模块。请逐张判断给定的、已确认授权的待审核证据卡"
+        "是否适合作为当前项目的可引用证据。不能因为文字通顺或共享关键词就批准；"
+        "信息不足、来源边界不清、把分析当事实或存在明显问题时请选择 rejected。"
+        "不得补造人物、数字、时间、地点或因果关系。请对每个 evidence_id 各返回一项，"
+        "只返回一个 JSON 对象，不要 Markdown 代码围栏。\n\n"
+        "JSON 字段必须为 reviews（数组，每项包含 evidence_id、review_status、"
+        "review_reason、uncertainties；review_status 只能是 approved 或 rejected）。\n\n"
+        "证据卡（每行一个 JSON 对象）：\n"
+        + "\n".join(lines)
+    )
+    return prompt, allowed_ids
+
+
 def _parse_evidence_review_advice(
     response: Mapping[str, Any],
     *,
@@ -548,6 +834,86 @@ def _parse_evidence_review_advice(
         review_reason=_clean_text(data.get("review_reason"), limit=300),
         uncertainties=_string_list(data.get("uncertainties"), field="uncertainties"),
         model=model,
+    )
+
+
+def _parse_evidence_review_batch(
+    response: Mapping[str, Any],
+    *,
+    allowed_ids: set[int],
+    model: str,
+) -> EvidenceReviewBatchAdvice:
+    data = _extract_json_object(_response_content(response))
+    raw_reviews = data.get("reviews")
+    if not isinstance(raw_reviews, list):
+        raise LLMResponseError("模型字段 reviews 必须是数组。")
+    parsed: dict[int, EvidenceReviewAdvice] = {}
+    for raw_item in raw_reviews:
+        if not isinstance(raw_item, Mapping):
+            raise LLMResponseError("模型批量审核项格式不正确。")
+        try:
+            evidence_id = int(raw_item.get("evidence_id"))
+        except (TypeError, ValueError) as exc:
+            raise LLMResponseError("模型批量审核引用了非整数证据编号。") from exc
+        if evidence_id not in allowed_ids:
+            raise LLMResponseError(
+                f"模型引用了本次批量上下文之外的证据 E{evidence_id}。"
+            )
+        if evidence_id in parsed:
+            raise LLMResponseError(f"模型批量审核重复返回证据 E{evidence_id}。")
+        status = _clean_text(raw_item.get("review_status"), limit=30)
+        if status not in {ReviewStatus.APPROVED.value, ReviewStatus.REJECTED.value}:
+            raise LLMResponseError(
+                "模型批量审核状态必须是 approved 或 rejected。"
+            )
+        parsed[evidence_id] = EvidenceReviewAdvice(
+            review_status=status,
+            review_reason=_clean_text(raw_item.get("review_reason"), limit=300),
+            uncertainties=_string_list(
+                raw_item.get("uncertainties"), field="uncertainties"
+            ),
+            model=model,
+        )
+    missing = allowed_ids - set(parsed)
+    if missing:
+        missing_text = "、".join(f"E{item}" for item in sorted(missing))
+        raise LLMResponseError(f"模型批量审核遗漏证据卡：{missing_text}。")
+    return EvidenceReviewBatchAdvice(
+        reviews=tuple((evidence_id, parsed[evidence_id]) for evidence_id in sorted(parsed)),
+        model=model,
+    )
+
+
+def request_evidence_review_batch(
+    evidence_rows: Sequence[Mapping[str, Any]],
+    *,
+    config: LLMSettings | None = None,
+    post_json: Callable[
+        [str, Mapping[str, str], Mapping[str, Any], float], Mapping[str, Any]
+    ]
+    | None = None,
+) -> EvidenceReviewBatchAdvice:
+    """Review several cards in one provider request to reduce round trips."""
+
+    current = config or llm_settings
+    if not current.configured:
+        raise LLMConfigurationError(
+            "尚未启用大模型审核。请配置 QINGJI_LLM_ENABLED、"
+            "QINGJI_LLM_API_KEY 和 QINGJI_LLM_MODEL。"
+        )
+    prompt, allowed_ids = build_evidence_review_batch_prompt(
+        evidence_rows,
+        max_context_chars=current.max_context_chars,
+    )
+    response = _call_chat_completion(
+        prompt,
+        config=current,
+        post_json=post_json or _default_post_json,
+    )
+    return _parse_evidence_review_batch(
+        response,
+        allowed_ids=allowed_ids,
+        model=current.model,
     )
 
 

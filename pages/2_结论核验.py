@@ -6,7 +6,12 @@ import streamlit as st
 
 from qingji.config import llm_settings
 from qingji.demo import add_demo_supplement
-from qingji.llm import LLMConfigurationError, LLMError, request_claim_assistance
+from qingji.llm import (
+    LLMConfigurationError,
+    LLMError,
+    request_claim_assistance,
+    request_claim_evidence_review,
+)
 from qingji.ui import (
     TASK_STATUS_LABELS,
     VERDICT_ICONS,
@@ -298,6 +303,100 @@ else:
                 st.markdown(evidence_card_html(card), unsafe_allow_html=True)
             if link.get("rationale"):
                 st.caption(f"关联说明：{link['rationale']}")
+
+st.markdown("### 大模型证据关系复核")
+latest_relation_run = db.get_latest_claim_run(
+    int(active_claim_id), "llm_claim_evidence_review"
+)
+if latest_relation_run and latest_relation_run.get("status") == "completed":
+    relation_output = latest_relation_run.get("output") or {}
+    relation_uncertainties = relation_output.get("uncertainties") or []
+    st.caption(
+        f"最近一次模型复核：{latest_relation_run.get('model') or relation_output.get('model') or '未标注'}；"
+        "模型只负责筛选证据关系，四级结论仍由本地规则计算。"
+    )
+    if relation_uncertainties:
+        st.warning("模型标记的不确定性：" + "；".join(relation_uncertainties))
+if not llm_settings.configured:
+    st.info(
+        "配置大模型后，可以让模型重新判断哪些证据是直接支持、直接冲突或仅作背景，"
+        "从而减少单纯关键词命中带来的误关联。"
+    )
+else:
+    st.caption(
+        "模型只会读取已批准、已确认授权的脱敏证据卡。勾选确认后，模型关系会写入本条结论的证据关联；"
+        "四级核验结果、范围提醒和安全改写仍由本地规则负责。"
+    )
+    trust_relation_review = st.checkbox(
+        "我确认信任本次大模型证据关系复核，并允许它更新本条结论的证据关联。",
+        key=f"trust_claim_evidence_review_{project_id}_{active_claim_id}",
+    )
+    review_relations = st.button(
+        "让大模型重新筛选支持与冲突证据",
+        type="primary",
+        disabled=not trust_relation_review,
+        key=f"review_claim_evidence_relations_{project_id}_{active_claim_id}",
+    )
+    if review_relations:
+        relation_input_rows = db.list_evidence_cards(
+            project_id,
+            review_status="approved",
+        )
+        relation_run_input = {
+            "claim_id": int(active_claim_id),
+            "claim_checked_at": claim.get("checked_at"),
+            "model": llm_settings.model,
+            "candidate_count": len(relation_input_rows),
+        }
+        try:
+            with st.spinner("正在让模型复核证据与结论的实际关系……"):
+                relation_advice = request_claim_evidence_review(
+                    claim.get("claim_text", ""),
+                    relation_input_rows,
+                    config=llm_settings,
+                )
+                relation_overrides = {
+                    int(item.evidence_id): item.relation
+                    for item in relation_advice.reviews
+                }
+                relation_rationales = {
+                    int(item.evidence_id): (
+                        "模型复核：" + (item.rationale or "已根据结论语义复核该证据关系。")
+                    )
+                    for item in relation_advice.reviews
+                }
+                stored_relation = recheck_claim(
+                    db,
+                    int(active_claim_id),
+                    relation_overrides=relation_overrides,
+                    relation_rationales=relation_rationales,
+                )
+            db.create_agent_run(
+                project_id,
+                "llm_claim_evidence_review",
+                claim_id=int(active_claim_id),
+                input_data=relation_run_input,
+                output_data=relation_advice.as_dict(),
+            )
+            st.success(
+                f"模型已复核 {len(relation_advice.reviews)} 张候选证据卡；"
+                f"本地规则重新计算结果为“{VERDICT_LABELS[stored_relation.evaluation.verdict.value]}”。"
+            )
+            st.rerun()
+        except LLMConfigurationError as exc:
+            st.warning(str(exc))
+        except LLMError as exc:
+            st.error(f"大模型证据关系复核失败：{exc}")
+            db.create_agent_run(
+                project_id,
+                "llm_claim_evidence_review",
+                claim_id=int(active_claim_id),
+                status="failed",
+                input_data=relation_run_input,
+                error_message=str(exc)[:500],
+            )
+        except Exception as exc:
+            st.error(f"大模型证据关系复核失败：{exc}")
 
 st.markdown("### 可选的大模型辅助")
 advice_key = (

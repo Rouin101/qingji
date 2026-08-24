@@ -149,16 +149,29 @@ def generate_evidence_drafts(
     material_id: int,
     segments: Sequence[object],
     source_role: str,
+    *,
+    max_cards: int = 40,
+    target_chars: int = 720,
 ) -> list[EvidenceDraft]:
-    """Create one conservative evidence-card draft per persisted segment.
+    """Create bounded, conservative evidence-card drafts from persisted segments.
 
     A segment may be a mapping or object exposing ``id``/``segment_id``,
     ``redacted_text``/``text``, and optionally ``locator``.
+
+    Segments remain fine-grained in storage for traceability and retrieval, but
+    adjacent short segments are merged into a single review card.  This keeps a
+    long transcript from producing hundreds of nearly identical review forms
+    while preserving the complete redacted quote in the generated cards.
     """
+
+    if isinstance(max_cards, bool) or not isinstance(max_cards, int) or max_cards <= 0:
+        raise ValueError("max_cards must be a positive integer")
+    if isinstance(target_chars, bool) or not isinstance(target_chars, int) or target_chars < 80:
+        raise ValueError("target_chars must be at least 80")
 
     evidence_type = evidence_type_for_role(source_role)
     label = _TYPE_LABELS[evidence_type]
-    drafts: list[EvidenceDraft] = []
+    normalized_segments: list[tuple[int, str, str]] = []
     for index, segment in enumerate(segments, start=1):
         segment_id = _read_value(segment, ("segment_id", "id"))
         if segment_id is None:
@@ -171,6 +184,48 @@ def generate_evidence_drafts(
         locator = str(
             _read_value(segment, ("locator", "source_locator"), f"第{index}段")
         )
+        normalized_segments.append((int(segment_id), quote, locator))
+
+    if not normalized_segments:
+        return []
+
+    groups: list[list[tuple[int, str, str]]] = []
+    current: list[tuple[int, str, str]] = []
+    current_chars = 0
+    for item in normalized_segments:
+        item_chars = len(item[1])
+        if current and current_chars + item_chars + 1 > target_chars:
+            groups.append(current)
+            current = []
+            current_chars = 0
+        current.append(item)
+        current_chars += item_chars + (1 if current_chars else 0)
+    if current:
+        groups.append(current)
+
+    # If natural grouping still creates too many cards, merge adjacent groups
+    # evenly.  No segment is dropped; only the review granularity changes.
+    if len(groups) > max_cards:
+        merged: list[list[tuple[int, str, str]]] = []
+        for index in range(max_cards):
+            start = index * len(groups) // max_cards
+            end = (index + 1) * len(groups) // max_cards
+            combined = [item for group in groups[start:end] for item in group]
+            if combined:
+                merged.append(combined)
+        groups = merged
+
+    drafts: list[EvidenceDraft] = []
+    for group in groups:
+        segment_id = group[0][0]
+        quote = " ".join(item[1] for item in group).strip()
+        first_locator = group[0][2]
+        last_locator = group[-1][2]
+        locator = (
+            first_locator
+            if first_locator == last_locator
+            else f"{first_locator}–{last_locator}"
+        )
         drafts.append(
             EvidenceDraft(
                 material_id=int(material_id),
@@ -178,7 +233,7 @@ def generate_evidence_drafts(
                 evidence_type=evidence_type,
                 title=f"{label}｜{_shorten(quote, 22)}",
                 quote=quote,
-                summary=_shorten(quote, 90),
+                summary=_shorten(quote, 140),
                 source_locator=locator,
             )
         )

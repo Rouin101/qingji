@@ -21,6 +21,7 @@ from qingji.workflow import (
     import_text_material,
     recheck_claim,
     review_evidence_card,
+    review_evidence_cards,
 )
 
 DIFFICULTY_TEXT = (
@@ -457,6 +458,89 @@ class WorkflowTestCase(unittest.TestCase):
         stored = check_and_store_claim(self.db, self.project_id, SIMPLE_CLAIM)
         self.assertEqual(stored.evaluation.verdict, Verdict.UNSUPPORTED)
         self.assertEqual(stored.evaluation.supporting_evidence_ids, [])
+
+    def test_long_material_is_merged_into_bounded_review_cards(self) -> None:
+        long_text = "".join(
+            f"第{index}位受访者记录：使用线上平台时描述了办理流程和遇到的问题。"
+            for index in range(1, 901)
+        )
+        result = import_text_material(
+            self.db,
+            self.project_id,
+            long_text,
+            original_filename="长材料.txt",
+            source_role="受访者",
+            context="长材料测试",
+            captured_at="2026-08-24",
+            consent_status=ConsentStatus.CONFIRMED,
+            custom_sensitive_terms=None,
+            is_fictional=True,
+        )
+
+        segments = self.db.list_segments(result.material_id)
+        self.assertGreater(len(segments), len(result.evidence_card_ids))
+        self.assertLessEqual(len(result.evidence_card_ids), 40)
+        self.assertTrue(any("合并生成" in warning for warning in result.warnings))
+        card_quotes = "\n".join(
+            self.db.get_evidence_card(card_id)["quote"]
+            for card_id in result.evidence_card_ids
+        )
+        self.assertIn("第1位受访者", card_quotes)
+        self.assertIn("第900位受访者", card_quotes)
+
+    def test_bulk_review_refreshes_project_claims_once_per_batch(self) -> None:
+        stored = check_and_store_claim(self.db, self.project_id, SIMPLE_CLAIM)
+        imported = import_text_material(
+            self.db,
+            self.project_id,
+            DIFFICULTY_TEXT,
+            original_filename="批量审核材料.txt",
+            source_role="受访者",
+            context="批量审核测试",
+            captured_at="2026-08-24",
+            consent_status=ConsentStatus.CONFIRMED,
+            custom_sensitive_terms=None,
+            is_fictional=True,
+        )
+        updates = [
+            {
+                "evidence_card_id": card_id,
+                "title": self.db.get_evidence_card(card_id)["title"],
+                "summary": self.db.get_evidence_card(card_id)["summary"],
+                "evidence_type": self.db.get_evidence_card(card_id)["evidence_type"],
+                "review_status": "approved",
+                "change_reason": "批量审核测试",
+            }
+            for card_id in imported.evidence_card_ids
+        ]
+        results = review_evidence_cards(self.db, updates)
+
+        self.assertTrue(results)
+        self.assertTrue(
+            all(stored.claim_id in result.rechecked_claim_ids for result in results)
+        )
+        self.assertEqual(
+            self.db.get_claim(stored.claim_id)["verdict"],
+            Verdict.SUPPORTED.value,
+        )
+
+    def test_confirmed_model_relation_can_replace_local_support_link(self) -> None:
+        imported = self._import(DIFFICULTY_TEXT)
+        stored = check_and_store_claim(self.db, self.project_id, SIMPLE_CLAIM)
+        card_id = imported.evidence_card_ids[0]
+        self.assertEqual(stored.evaluation.verdict, Verdict.SUPPORTED)
+
+        rechecked = recheck_claim(
+            self.db,
+            stored.claim_id,
+            relation_overrides={card_id: "context"},
+            relation_rationales={card_id: "模型复核：仅共享主题词，未直接对应结论。"},
+        )
+
+        self.assertEqual(rechecked.evaluation.verdict, Verdict.UNSUPPORTED)
+        links = self.db.list_claim_evidence_links(stored.claim_id)
+        self.assertEqual([link["relation"] for link in links], ["context"])
+        self.assertIn("模型复核", links[0]["rationale"])
 
 
 if __name__ == "__main__":

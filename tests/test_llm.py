@@ -9,9 +9,13 @@ from qingji.llm import (
     LLMConfigurationError,
     LLMResponseError,
     build_claim_assistance_prompt,
+    build_claim_evidence_review_prompt,
     build_evidence_assistance_prompt,
+    build_evidence_review_batch_prompt,
     build_evidence_review_prompt,
     probe_llm_connection,
+    request_claim_evidence_review,
+    request_evidence_review_batch,
     request_evidence_review,
     request_evidence_assistance,
     request_claim_assistance,
@@ -365,6 +369,124 @@ class LLMTests(unittest.TestCase):
                 config=_config(),
                 post_json=fake_post,
             )
+
+    def test_claim_evidence_review_redacts_and_demotes_omitted_cards(self) -> None:
+        captured: dict[str, object] = {}
+
+        def fake_post(url, headers, payload, timeout):
+            captured["payload"] = payload
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                '{"evidence_reviews":['
+                                '{"evidence_id":1,"relation":"support",'
+                                '"rationale":"对象与行为直接对应"}],'
+                                '"uncertainties":["样本范围有限"]}'
+                            )
+                        }
+                    }
+                ]
+            }
+
+        rows = [
+            {
+                "id": 1,
+                "review_status": "approved",
+                "consent_status": "confirmed",
+                "title": "受访者 test@example.com",
+                "summary": "手机号 13812345678 反馈困难",
+                "quote": "使用平台时遇到困难。",
+                "evidence_type": "interview_statement",
+                "source_locator": "第1段",
+            },
+            {
+                "id": 2,
+                "review_status": "approved",
+                "consent_status": "confirmed",
+                "title": "背景材料",
+                "summary": "平台存在服务流程",
+                "quote": "平台提供线上服务。",
+                "evidence_type": "formal_record",
+                "source_locator": "第2段",
+            },
+        ]
+        prompt, allowed = build_claim_evidence_review_prompt(
+            "居民使用平台时遇到困难。", rows
+        )
+        self.assertEqual(allowed, {1, 2})
+        self.assertNotIn("test@example.com", prompt)
+        self.assertNotIn("13812345678", prompt)
+
+        advice = request_claim_evidence_review(
+            "居民使用平台时遇到困难。",
+            rows,
+            config=_config(),
+            post_json=fake_post,
+        )
+        relations = {item.evidence_id: item.relation for item in advice.reviews}
+        self.assertEqual(relations, {1: "support", 2: "context"})
+        self.assertIn("[邮箱]", str(captured["payload"]))
+
+    def test_batch_evidence_review_uses_one_json_response_for_all_cards(self) -> None:
+        rows = [
+            {
+                "id": 7,
+                "review_status": "draft",
+                "consent_status": "confirmed",
+                "title": "卡片一",
+                "summary": "需要帮助",
+                "quote": "操作时需要帮助。",
+                "evidence_type": "interview_statement",
+            },
+            {
+                "id": 8,
+                "review_status": "draft",
+                "consent_status": "confirmed",
+                "title": "卡片二",
+                "summary": "完成顺利",
+                "quote": "整个操作很顺利。",
+                "evidence_type": "interview_statement",
+            },
+        ]
+        prompt, allowed = build_evidence_review_batch_prompt(rows)
+        self.assertEqual(allowed, {7, 8})
+        self.assertIn('"evidence_id":7', prompt)
+        self.assertIn('"evidence_id":8', prompt)
+
+        calls = 0
+
+        def fake_post(url, headers, payload, timeout):
+            nonlocal calls
+            calls += 1
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                '{"reviews":['
+                                '{"evidence_id":7,"review_status":"approved",'
+                                '"review_reason":"来源清晰","uncertainties":[]},'
+                                '{"evidence_id":8,"review_status":"rejected",'
+                                '"review_reason":"需要人工复核","uncertainties":[]}'
+                                ']}'
+                            )
+                        }
+                    }
+                ]
+            }
+
+        advice = request_evidence_review_batch(
+            rows,
+            config=_config(),
+            post_json=fake_post,
+        )
+        self.assertEqual(calls, 1)
+        self.assertEqual(
+            [item.review_status for _, item in advice.reviews],
+            ["approved", "rejected"],
+        )
 
     def test_probe_uses_no_project_material_and_returns_provider_model(self) -> None:
         captured: dict[str, object] = {}

@@ -232,14 +232,30 @@ def configure_page(title: str, icon: str = "🌱") -> None:
             padding: .3rem .65rem .8rem;
         }
         .stButton > button[kind="primary"],
+        .stFormSubmitButton > button[kind="primary"],
         .stDownloadButton > button[kind="primary"] {
             background: var(--qj-primary);
             border-color: var(--qj-primary);
+            color: #ffffff !important;
+        }
+        .stButton > button[kind="primary"] *,
+        .stFormSubmitButton > button[kind="primary"] *,
+        .stDownloadButton > button[kind="primary"] * {
+            color: #ffffff !important;
         }
         .stButton > button[kind="primary"]:hover,
+        .stFormSubmitButton > button[kind="primary"]:hover,
         .stDownloadButton > button[kind="primary"]:hover {
             background: var(--qj-primary-strong);
             border-color: var(--qj-primary-strong);
+        }
+        .stButton > button[kind="primary"]:disabled,
+        .stFormSubmitButton > button[kind="primary"]:disabled,
+        .stDownloadButton > button[kind="primary"]:disabled {
+            background: #c7b6dc;
+            border-color: #c7b6dc;
+            color: #ffffff !important;
+            opacity: .92;
         }
         .stButton > button:focus-visible,
         .stDownloadButton > button:focus-visible,

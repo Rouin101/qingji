@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+from collections.abc import Mapping
+
 from .models import ClaimEvaluation, EvidenceCandidate, EvidenceType, Verdict
 from .retrieval import RetrievalMatch, rank_evidence_with_explanations
 
@@ -174,8 +176,14 @@ def evaluate_claim(
     claim_text: str,
     candidates: list[EvidenceCandidate],
     max_candidates: int = 8,
+    relation_overrides: Mapping[int, str] | None = None,
 ) -> ClaimEvaluation:
-    """Evaluate support using only the supplied, eligible candidate IDs."""
+    """Evaluate support using only the supplied, eligible candidate IDs.
+
+    ``relation_overrides`` is an optional, user-confirmed model review of the
+    retrieved cards.  The model may correct a false lexical match, but the
+    verdict, scope flags, and conservative rewrite remain computed here.
+    """
 
     if not isinstance(claim_text, str) or not claim_text.strip():
         raise ValueError("claim_text must not be empty")
@@ -192,8 +200,10 @@ def evaluate_claim(
     context: list[EvidenceCandidate] = []
 
     for match in relevant:
-        relation = _relation(claim_stance, match)
         candidate = match.candidate
+        relation = (relation_overrides or {}).get(int(candidate.id))
+        if relation not in {"support", "contradict", "context"}:
+            relation = _relation(claim_stance, match)
         if (
             relation == "support"
             and candidate.evidence_type == EvidenceType.TEAM_ANALYSIS

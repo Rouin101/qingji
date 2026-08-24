@@ -88,6 +88,19 @@ class ClaimTests(unittest.TestCase):
         self.assertNotEqual(result.verdict, Verdict.SUPPORTED)
         self.assertIn("causal_language", result.rule_flags)
 
+    def test_model_relation_override_can_demote_a_lexical_match(self) -> None:
+        evidence = [candidate(4, "我使用线上办事平台时遇到困难。")]
+
+        result = evaluate_claim(
+            "线上办事平台使用困难",
+            evidence,
+            relation_overrides={4: "context"},
+        )
+
+        self.assertEqual(result.verdict, Verdict.UNSUPPORTED)
+        self.assertEqual(result.supporting_evidence_ids, [])
+        self.assertEqual(result.context_evidence_ids, [4])
+
 
 if __name__ == "__main__":
     unittest.main()

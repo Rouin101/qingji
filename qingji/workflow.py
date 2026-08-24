@@ -21,6 +21,7 @@ import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from .claims import evaluate_claim, validate_citation_ids
@@ -31,6 +32,7 @@ from .models import (
     ConsentStatus,
     EvidenceCandidate,
     MaterialImportResult,
+    ReviewStatus,
     TaskStatus,
 )
 from .privacy import redact_text
@@ -45,6 +47,8 @@ _TASK_RECOMMENDATION = (
 )
 
 _MAX_CLAIM_LENGTH = 500
+_MAX_EVIDENCE_CARDS_PER_MATERIAL = 40
+_EVIDENCE_CARD_TARGET_CHARS = 720
 
 
 @dataclass(frozen=True)
@@ -166,9 +170,19 @@ def import_text_material(
 
     evidence_card_ids: list[int] = []
     if consent == ConsentStatus.CONFIRMED.value:
-        for draft in generate_evidence_drafts(
-            material_id, segments, source_role
-        ):
+        drafts = generate_evidence_drafts(
+            material_id,
+            segments,
+            source_role,
+            max_cards=_MAX_EVIDENCE_CARDS_PER_MATERIAL,
+            target_chars=_EVIDENCE_CARD_TARGET_CHARS,
+        )
+        if len(drafts) < len(segments):
+            warnings.append(
+                f"正文已保存为 {len(segments)} 个可追溯片段，并合并生成 "
+                f"{len(drafts)} 张审核卡，避免长材料产生过多重复审核项。"
+            )
+        for draft in drafts:
             card_id = db.create_evidence_card(
                 project_id,
                 draft.segment_id,
@@ -224,7 +238,12 @@ def _find_claim_by_text(
     )
 
 
-def _replace_claim_links(db: Any, claim_id: int, evaluation: ClaimEvaluation) -> None:
+def _replace_claim_links(
+    db: Any,
+    claim_id: int,
+    evaluation: ClaimEvaluation,
+    relation_rationales: Mapping[int, str] | None = None,
+) -> None:
     """Rebuild support/contradict/context links from the latest evaluation."""
     for link in db.list_claim_evidence_links(claim_id):
         db.unlink_claim_evidence(claim_id, int(link["evidence_card_id"]))
@@ -239,7 +258,9 @@ def _replace_claim_links(db: Any, claim_id: int, evaluation: ClaimEvaluation) ->
                 claim_id,
                 int(evidence_id),
                 relation,
-                rationale=_LINK_RATIONALES[relation],
+                rationale=(relation_rationales or {}).get(
+                    int(evidence_id), _LINK_RATIONALES[relation]
+                ),
                 review_status="approved",
             )
 
@@ -313,11 +334,18 @@ def _store_evaluation(
     project_id: int,
     claim_text: str,
     claim_id: int | None,
+    relation_overrides: Mapping[int, str] | None = None,
+    relation_rationales: Mapping[int, str] | None = None,
 ) -> StoredClaimResult:
     evidence_rows = db.list_evidence_cards(project_id)
     material_rows = db.list_materials(project_id)
     candidates = _load_approved_candidates(db, project_id, evidence_rows)
-    evaluation = evaluate_claim(claim_text, candidates, max_candidates=8)
+    evaluation = evaluate_claim(
+        claim_text,
+        candidates,
+        max_candidates=8,
+        relation_overrides=relation_overrides,
+    )
     diagnostic = build_retrieval_diagnostic(
         claim_text,
         evidence_rows,
@@ -361,7 +389,7 @@ def _store_evaluation(
             checked_at=_now_iso(),
         )
 
-    _replace_claim_links(db, claim_id, evaluation)
+    _replace_claim_links(db, claim_id, evaluation, relation_rationales)
     _sync_followup_tasks(
         db, claim_id, evaluation.missing_evidence
     )
@@ -393,7 +421,13 @@ def check_and_store_claim(
     return _store_evaluation(db, int(project_id), claim_text, claim_id=None)
 
 
-def recheck_claim(db: Any, claim_id: int) -> StoredClaimResult:
+def recheck_claim(
+    db: Any,
+    claim_id: int,
+    *,
+    relation_overrides: Mapping[int, str] | None = None,
+    relation_rationales: Mapping[int, str] | None = None,
+) -> StoredClaimResult:
     """Re-evaluate an existing claim against the latest evidence set."""
     claim_id = int(claim_id)
     claim = db.get_claim(claim_id)
@@ -404,6 +438,8 @@ def recheck_claim(db: Any, claim_id: int) -> StoredClaimResult:
         int(claim["project_id"]),
         claim["claim_text"],
         claim_id=claim_id,
+        relation_overrides=relation_overrides,
+        relation_rationales=relation_rationales,
     )
 
 
@@ -493,3 +529,134 @@ def review_evidence_card(
         rechecked_claim_ids=tuple(rechecked_claim_ids),
         review_event_id=review_event_id,
     )
+
+
+def review_evidence_cards(
+    db: Any,
+    updates: Sequence[Mapping[str, Any]],
+) -> tuple[EvidenceReviewResult, ...]:
+    """Apply several card reviews and refresh project claims only once.
+
+    The single-card API remains the detailed path.  This bulk path is used by
+    manual and model-assisted batch review so each provider result is persisted
+    while SQLite claim recalculation happens at most once for the whole batch.
+    """
+
+    if not updates:
+        return ()
+
+    prepared: list[dict[str, Any]] = []
+    seen_ids: set[int] = set()
+    project_id: int | None = None
+    for raw_update in updates:
+        try:
+            evidence_card_id = int(raw_update["evidence_card_id"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("批量审核缺少有效的证据卡编号。") from exc
+        if evidence_card_id in seen_ids:
+            raise ValueError(f"批量审核重复包含证据 E{evidence_card_id}。")
+        seen_ids.add(evidence_card_id)
+        current = db.get_evidence_card(evidence_card_id)
+        if current is None:
+            raise ValueError(f"证据 E{evidence_card_id} 不存在，无法保存审核结果。")
+        current_project_id = int(current["project_id"])
+        if project_id is None:
+            project_id = current_project_id
+        elif current_project_id != project_id:
+            raise ValueError("批量审核的证据卡必须属于同一个项目。")
+
+        normalized_title = str(raw_update.get("title") or "").strip()
+        normalized_summary = str(raw_update.get("summary") or "").strip()
+        if not normalized_title or not normalized_summary:
+            raise ValueError(f"证据 E{evidence_card_id} 的标题和摘要不能为空。")
+        normalized_reason = str(raw_update.get("change_reason") or "").strip()
+        if len(normalized_reason) > 500:
+            raise ValueError(f"证据 E{evidence_card_id} 的审核说明不能超过 500 字。")
+        changes = {
+            "title": normalized_title,
+            "summary": normalized_summary,
+            "evidence_type": _status_value(
+                raw_update.get("evidence_type", "team_analysis")
+            ),
+            "review_status": _status_value(raw_update.get("review_status")),
+        }
+        old_status = _status_value(current.get("review_status"))
+        if changes["review_status"] not in {item.value for item in ReviewStatus}:
+            raise ValueError(f"证据 E{evidence_card_id} 的审核状态无效。")
+        changed = any(
+            _status_value(current.get(field)) != value
+            for field, value in changes.items()
+        )
+        prepared.append(
+            {
+                "evidence_card_id": evidence_card_id,
+                "current": current,
+                "changes": changes,
+                "old_status": old_status,
+                "changed": changed,
+                "change_reason": normalized_reason,
+                "before": {
+                    field: _status_value(current.get(field)) for field in changes
+                },
+            }
+        )
+
+    assert project_id is not None
+    for item in prepared:
+        if item["changed"]:
+            updated = db.update_evidence_card(
+                item["evidence_card_id"], **item["changes"]
+            )
+            if updated is None:
+                raise RuntimeError(
+                    f"证据 E{item['evidence_card_id']} 保存失败。"
+                )
+            item["updated"] = updated
+        else:
+            item["updated"] = item["current"]
+
+    should_recheck = any(
+        item["changed"]
+        and "approved" in {item["old_status"], item["changes"]["review_status"]}
+        for item in prepared
+    )
+    rechecked_claim_ids: tuple[int, ...] = ()
+    if should_recheck:
+        refreshed: list[int] = []
+        for claim in db.list_claims(project_id):
+            claim_id = int(claim["id"])
+            recheck_claim(db, claim_id)
+            refreshed.append(claim_id)
+        rechecked_claim_ids = tuple(refreshed)
+
+    results: list[EvidenceReviewResult] = []
+    for item in prepared:
+        updated = item["updated"]
+        if not item["changed"]:
+            results.append(
+                EvidenceReviewResult(
+                    evidence_card=updated,
+                    rechecked_claim_ids=(),
+                    review_event_id=None,
+                )
+            )
+            continue
+        after = {
+            field: _status_value(updated.get(field))
+            for field in item["changes"]
+        }
+        event_id = db.create_evidence_review_event(
+            item["evidence_card_id"],
+            before=item["before"],
+            after=after,
+            change_reason=item["change_reason"],
+            rechecked_claim_ids=rechecked_claim_ids,
+        )
+        results.append(
+            EvidenceReviewResult(
+                evidence_card=updated,
+                rechecked_claim_ids=rechecked_claim_ids,
+                review_event_id=event_id,
+            )
+        )
+    return tuple(results)

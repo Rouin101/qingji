@@ -11,7 +11,7 @@ from qingji.document import DocumentImportError, extract_uploaded_text
 from qingji.llm import (
     LLMError,
     request_evidence_assistance,
-    request_evidence_review,
+    request_evidence_review_batch,
 )
 from qingji.models import ConsentStatus
 from qingji.ui import (
@@ -29,7 +29,11 @@ from qingji.ui import (
     render_sidebar_note,
     render_workflow_steps,
 )
-from qingji.workflow import import_text_material, review_evidence_card
+from qingji.workflow import (
+    import_text_material,
+    review_evidence_card,
+    review_evidence_cards,
+)
 
 
 _REVIEW_FIELD_LABELS = {
@@ -485,23 +489,30 @@ with tab_review:
             failures: list[str] = []
             updated_count = 0
             rechecked_claim_ids: set[int] = set()
-            for card in authorized_draft_cards:
-                try:
-                    result = review_evidence_card(
-                        db,
-                        int(card["id"]),
-                        title=str(card.get("title") or "").strip(),
-                        summary=str(card.get("summary") or "").strip(),
-                        evidence_type=card.get("evidence_type", "team_analysis"),
-                        review_status="approved",
-                        change_reason="",
-                    )
-                except Exception as exc:
-                    failures.append(f"E{card['id']}：{exc}")
-                else:
-                    if result.review_event_id is not None:
-                        updated_count += 1
+            try:
+                results = review_evidence_cards(
+                    db,
+                    [
+                        {
+                            "evidence_card_id": int(card["id"]),
+                            "title": str(card.get("title") or "").strip(),
+                            "summary": str(card.get("summary") or "").strip(),
+                            "evidence_type": card.get(
+                                "evidence_type", "team_analysis"
+                            ),
+                            "review_status": "approved",
+                            "change_reason": "",
+                        }
+                        for card in authorized_draft_cards
+                    ],
+                )
+                updated_count = sum(
+                    result.review_event_id is not None for result in results
+                )
+                for result in results:
                     rechecked_claim_ids.update(result.rechecked_claim_ids)
+            except Exception as exc:
+                failures.append(f"批量审核失败：{exc}")
             if updated_count:
                 st.success(
                     f"已批准 {updated_count} 张证据卡。"
@@ -536,18 +547,21 @@ with tab_review:
                 approved_count = 0
                 rejected_count = 0
                 rechecked_claim_ids: set[int] = set()
+                model_updates: list[dict] = []
+                batch_size = max(2, int(getattr(llm_settings, "review_batch_size", 8)))
                 with st.spinner(
-                    f"正在让模型审核 {len(authorized_draft_cards)} 张证据卡……"
+                    f"正在让模型分批审核 {len(authorized_draft_cards)} 张证据卡（每批 {batch_size} 张）……"
                 ):
-                    for card in authorized_draft_cards:
+                    for offset in range(0, len(authorized_draft_cards), batch_size):
+                        batch = authorized_draft_cards[offset : offset + batch_size]
                         run_input = {
-                            "evidence_id": int(card["id"]),
+                            "evidence_ids": [int(card["id"]) for card in batch],
                             "model": llm_settings.model,
-                            "review_source": "bulk",
+                            "review_source": "bulk_batch",
                         }
                         try:
-                            advice = request_evidence_review(
-                                card,
+                            advice = request_evidence_review_batch(
+                                batch,
                                 config=llm_settings,
                             )
                             advice_data = advice.as_dict()
@@ -557,19 +571,28 @@ with tab_review:
                                 input_data=run_input,
                                 output_data=advice_data,
                             )
-                            result = review_evidence_card(
-                                db,
-                                int(card["id"]),
-                                title=str(card.get("title") or "").strip(),
-                                summary=str(card.get("summary") or "").strip(),
-                                evidence_type=card.get(
-                                    "evidence_type", "team_analysis"
-                                ),
-                                review_status=advice.review_status,
-                                change_reason=advice.review_reason,
-                            )
+                            card_by_id = {int(card["id"]): card for card in batch}
+                            for evidence_id, item in advice.reviews:
+                                card = card_by_id.get(int(evidence_id))
+                                if card is None:
+                                    raise ValueError(
+                                        f"模型返回了当前批次之外的证据 E{evidence_id}。"
+                                    )
+                                model_updates.append(
+                                    {
+                                        "evidence_card_id": int(evidence_id),
+                                        "title": str(card.get("title") or "").strip(),
+                                        "summary": str(card.get("summary") or "").strip(),
+                                        "evidence_type": card.get(
+                                            "evidence_type", "team_analysis"
+                                        ),
+                                        "review_status": item.review_status,
+                                        "change_reason": item.review_reason,
+                                    }
+                                )
                         except Exception as exc:
-                            model_failures.append(f"E{card['id']}：{exc}")
+                            batch_ids = "、".join(f"E{card['id']}" for card in batch)
+                            model_failures.append(f"{batch_ids}：{exc}")
                             try:
                                 db.create_agent_run(
                                     project_id,
@@ -580,12 +603,19 @@ with tab_review:
                                 )
                             except Exception:
                                 pass
-                        else:
-                            rechecked_claim_ids.update(result.rechecked_claim_ids)
-                            if advice.review_status == "approved":
+                if model_updates:
+                    try:
+                        results = review_evidence_cards(db, model_updates)
+                    except Exception as exc:
+                        model_failures.append(f"写入模型审核结果失败：{exc}")
+                    else:
+                        for update in model_updates:
+                            if update["review_status"] == "approved":
                                 approved_count += 1
                             else:
                                 rejected_count += 1
+                        for result in results:
+                            rechecked_claim_ids.update(result.rechecked_claim_ids)
                 st.success(
                     f"模型审核完成：批准 {approved_count} 张，"
                     f"拒绝 {rejected_count} 张，"
