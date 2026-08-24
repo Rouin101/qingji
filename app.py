@@ -27,11 +27,8 @@ from qingji.ui import (
     format_datetime,
     get_demo_context,
     is_demo_project,
-    render_demo_banner,
     render_page_intro,
-    render_next_action,
     render_sidebar_note,
-    render_workflow_steps,
     verdict_box,
 )
 
@@ -49,22 +46,7 @@ render_sidebar_note(project, database=db, project_id=project_id)
 render_page_intro(
     "QINGJI · 可信社会实践",
     "青迹",
-    "把已授权的现场材料变成可回溯证据，检查每一句结论是否说过了头。",
 )
-render_demo_banner(project)
-render_workflow_steps("overview")
-
-with st.expander("第一次使用？按这 4 步完成一次完整体验"):
-    st.markdown(
-        """
-        1. 先查看当前项目中的材料和结论，或新建一个自己的项目。
-        2. 在“材料与证据”导入文字材料，填写来源、场景和授权状态。
-        3. 人工审核证据卡后，到“结论核验”检查准备写入报告的一句话。
-        4. 在“成果与缺口”查看证据对应关系、补证任务并导出 Markdown。
-
-        推荐先完整走一遍当前项目流程，再继续录入其他经授权的材料。
-        """
-    )
 
 st.markdown("### 项目工作区")
 projects = db.list_projects()
@@ -355,8 +337,6 @@ for column, verdict in zip(
     ["supported", "partially_supported", "unsupported", "contradicted"],
 ):
     column.metric(VERDICT_LABELS[verdict], verdict_stats.get(verdict, 0))
-
-render_next_action(stats, heading="当前项目的下一步", current_step="overview")
 
 st.markdown("### 最近一次核验")
 if not claims:

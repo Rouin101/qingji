@@ -21,11 +21,8 @@ from qingji.ui import (
     empty_state,
     format_datetime,
     get_demo_context,
-    render_demo_banner,
-    render_next_action,
     render_page_intro,
     render_sidebar_note,
-    render_workflow_steps,
 )
 
 
@@ -103,14 +100,6 @@ render_sidebar_note(project, database=db, project_id=project_id)
 render_page_intro(
     "03 · OUTPUT & GAPS",
     "成果与缺口",
-    "把已经核验的表述、结论—证据关系和未解决任务放在一起，导出时继续保留来源定位。",
-)
-render_demo_banner(project)
-render_workflow_steps("output")
-render_next_action(
-    db.get_project_stats(project_id),
-    heading="成果处理进度",
-    current_step="output",
 )
 
 summary_columns = st.columns(4)

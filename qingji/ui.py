@@ -61,14 +61,6 @@ TASK_STATUS_LABELS = {
     "cancelled": "已取消",
 }
 
-WORKFLOW_STEPS = (
-    ("overview", "项目概览", "app.py", "创建或切换项目，查看总体进度。"),
-    ("materials", "材料与证据", "pages/1_材料与证据.py", "导入材料并审核证据卡。"),
-    ("claims", "结论核验", "pages/2_结论核验.py", "检查报告表述是否超出证据。"),
-    ("output", "成果与缺口", "pages/3_成果与缺口.py", "查看缺口、对应关系并导出。"),
-)
-
-
 NEXT_ACTION_PAGES = {
     "materials": "pages/1_材料与证据.py",
     "claims": "pages/2_结论核验.py",
@@ -153,22 +145,6 @@ def configure_page(title: str, icon: str = "🌱") -> None:
             font-weight: 750;
             letter-spacing: .13em;
             margin-bottom: .25rem;
-        }
-        .qj-lead {
-            color: var(--qj-muted);
-            font-size: 1.02rem;
-            line-height: 1.7;
-            max-width: 58rem;
-            margin: -.35rem 0 1rem;
-        }
-        .qj-demo {
-            background: linear-gradient(180deg, #fbf3ff 0, #f5ecfd 100%);
-            border: 1px solid #e8d6fb;
-            border-left: 5px solid #9b4dca;
-            border-radius: .7rem;
-            color: #5b2a8f;
-            margin: .4rem 0 1.2rem;
-            padding: .75rem 1rem;
         }
         .qj-card {
             background: rgba(255,255,255,.92);
@@ -269,34 +245,9 @@ def configure_page(title: str, icon: str = "🌱") -> None:
     )
 
 
-def render_page_intro(kicker: str, title: str, lead: str) -> None:
+def render_page_intro(kicker: str, title: str) -> None:
     st.markdown(f'<div class="qj-kicker">{escape_html(kicker)}</div>', unsafe_allow_html=True)
     st.title(title)
-    st.markdown(f'<div class="qj-lead">{escape_html(lead)}</div>', unsafe_allow_html=True)
-
-
-def render_demo_banner(project: Mapping[str, Any] | None = None) -> None:
-    if is_demo_project(project) or project is None:
-        title = "当前项目工作区"
-        message = (
-            "当前项目已载入完整的材料、证据和结论，可直接按流程继续整理。"
-            "新增材料请如实填写来源、授权状态和采集场景。"
-        )
-    else:
-        title = "用户项目工作区"
-        message = (
-            "请只导入有权使用的材料，并如实记录授权状态。"
-            "真实材料会先在本地脱敏；未确认授权的内容不会进入结论核验或可信导出。"
-        )
-    st.markdown(
-        (
-            '<div class="qj-demo">'
-            f"<strong>{escape_html(title)}</strong><br>"
-            f"{escape_html(message)}"
-            "</div>"
-        ),
-        unsafe_allow_html=True,
-    )
 
 
 def get_next_action(progress: Mapping[str, Any]) -> dict[str, str]:
@@ -362,25 +313,6 @@ def _next_step_hint(progress: Mapping[str, Any]) -> str:
     return f"下一步：{get_next_action(progress)['title']}"
 
 
-def render_next_action(
-    progress: Mapping[str, Any],
-    *,
-    heading: str = "建议下一步",
-    current_step: str | None = None,
-) -> None:
-    """Show one state-aware action instead of presenting every entry equally."""
-
-    action = get_next_action(progress)
-    with st.container(border=True):
-        st.markdown(f"#### {heading}")
-        st.markdown(f"**{action['title']}**")
-        st.caption(action["detail"])
-        if current_step == action["key"]:
-            st.caption("当前页面内即可完成这一步。")
-        else:
-            st.page_link(action["page"], label=action["button"], icon="➡️")
-
-
 def render_sidebar_note(
     project: Mapping[str, Any] | None = None,
     *,
@@ -421,33 +353,6 @@ def render_sidebar_note(
             action = get_next_action(progress)
             st.page_link(action["page"], label=action["button"], icon="➡️")
         st.caption("v1.2 · 开发版")
-
-
-def render_workflow_steps(current_step: str) -> None:
-    """Show the recommended path and make adjacent pages one click away."""
-
-    keys = [item[0] for item in WORKFLOW_STEPS]
-    current_index = keys.index(current_step) if current_step in keys else 0
-    with st.container(border=True):
-        columns = st.columns(len(WORKFLOW_STEPS))
-        for index, (key, label_text, page_path, help_text) in enumerate(
-            WORKFLOW_STEPS
-        ):
-            if index == current_index:
-                state = "🔵 当前"
-            elif index < current_index:
-                state = "↩️ 上一步"
-            elif index == current_index + 1:
-                state = "➡️ 下一步"
-            else:
-                state = "待开始"
-            with columns[index]:
-                st.page_link(
-                    page_path,
-                    label=f"{index + 1}. {label_text}",
-                    icon="🔵" if index == current_index else None,
-                )
-                st.caption(f"{state} · {help_text}")
 
 
 def row_to_dict(row: Any) -> dict[str, Any]:

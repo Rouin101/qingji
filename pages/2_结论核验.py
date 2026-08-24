@@ -22,11 +22,8 @@ from qingji.ui import (
     format_datetime,
     get_demo_context,
     is_demo_project,
-    render_demo_banner,
-    render_next_action,
     render_page_intro,
     render_sidebar_note,
-    render_workflow_steps,
     verdict_box,
 )
 from qingji.workflow import check_and_store_claim, recheck_claim
@@ -91,14 +88,6 @@ render_sidebar_note(project, database=db, project_id=project_id)
 render_page_intro(
     "02 · CLAIM CHECK",
     "结论核验",
-    "输入一句准备写入报告的话。青迹只使用已授权、已审核的证据，说明它目前能支持到什么程度。",
-)
-render_demo_banner(project)
-render_workflow_steps("claims")
-render_next_action(
-    db.get_project_stats(project_id),
-    heading="核验进度",
-    current_step="claims",
 )
 demo_mode = is_demo_project(project)
 history_verdict_key = f"claim_history_verdict_{project_id}"

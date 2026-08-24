@@ -25,11 +25,8 @@ from qingji.ui import (
     evidence_card_html,
     format_datetime,
     get_demo_context,
-    render_demo_banner,
-    render_next_action,
     render_page_intro,
     render_sidebar_note,
-    render_workflow_steps,
 )
 from qingji.workflow import (
     import_text_material,
@@ -143,14 +140,6 @@ render_sidebar_note(project, database=db, project_id=project_id)
 render_page_intro(
     "01 · MATERIALS & EVIDENCE",
     "材料与证据",
-    "先说明材料从哪里来、是否获得授权，再让系统生成待人工审核的证据卡。",
-)
-render_demo_banner(project)
-render_workflow_steps("materials")
-render_next_action(
-    db.get_project_stats(project_id),
-    heading="材料处理进度",
-    current_step="materials",
 )
 saved_evidence_advice: dict[int, dict] = {}
 for run in db.list_project_runs(
