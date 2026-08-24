@@ -373,7 +373,13 @@ with tab_import:
                 st.error(f"材料导入失败：{exc}")
             else:
                 st.session_state["last_import_result"] = result
-                if consent_choice == "confirmed" and not result.evidence_card_ids:
+                if consent_choice != "confirmed":
+                    st.warning(
+                        f"材料 M{result.material_id} 已保存，但当前授权状态为“"
+                        f"{CONSENT_LABELS[consent_choice]}”，所以没有生成待审核证据卡。"
+                        "若已取得授权，请将状态改为“已确认授权”后重新提交。"
+                    )
+                elif not result.evidence_card_ids:
                     st.error(
                         "材料已保存，但没有生成证据卡。请不要继续引用这份材料，"
                         "并检查脱敏文本或重新导入。"
@@ -389,10 +395,14 @@ with tab_import:
                 st.markdown("**确认后的脱敏文本**")
                 st.code(result.redacted_text, language=None)
                 if consent_choice != "confirmed":
-                    st.info("这份材料已保存，但在授权确认前不会进入结论核验。")
-                st.info(
-                    "下一步：打开上方“审核证据卡”标签，确认标题、摘要、类型和审核状态。"
-                )
+                    st.info(
+                        "下一步：确认授权后，将授权状态改为“已确认授权”并重新提交；"
+                        "未确认授权的材料不会进入结论核验。"
+                    )
+                else:
+                    st.info(
+                        "下一步：打开上方“审核证据卡”标签，确认标题、摘要、类型和审核状态。"
+                    )
 
     st.divider()
     with st.expander("批量导入文字文件", expanded=False):
