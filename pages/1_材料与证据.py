@@ -356,7 +356,7 @@ with tab_import:
                 if item.strip()
             ]
             try:
-                with st.spinner("正在本地检查隐私并生成证据卡……"):
+                with st.spinner("正在检查隐私并生成证据卡……"):
                     result = import_text_material(
                         db,
                         project_id,

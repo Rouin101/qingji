@@ -25,12 +25,16 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from .claims import evaluate_claim, validate_citation_ids
+from .config import llm_settings
 from .diagnostics import build_retrieval_diagnostic
 from .evidence import generate_evidence_drafts, split_text
+from .llm import LLMError, request_evidence_card_generation
 from .models import (
     ClaimEvaluation,
     ConsentStatus,
     EvidenceCandidate,
+    EvidenceDraft,
+    EvidenceType,
     MaterialImportResult,
     ReviewStatus,
     TaskStatus,
@@ -82,6 +86,45 @@ def _write_utf8(path: Path, content: str) -> None:
     # file always matches the SHA-256 computed from the original string.
     with path.open("w", encoding="utf-8", newline="") as handle:
         handle.write(content)
+
+
+def _model_card_drafts(
+    material_id: int,
+    segments: Sequence[Mapping[str, Any]],
+    advice: Any,
+) -> list[EvidenceDraft]:
+    """Turn model-selected segment ids back into exact persisted quotes."""
+
+    by_id = {int(segment["id"]): segment for segment in segments}
+    drafts: list[EvidenceDraft] = []
+    for card in advice.cards:
+        selected = [by_id[segment_id] for segment_id in card.segment_ids]
+        quote = " ".join(
+            str(segment.get("redacted_text") or "").strip()
+            for segment in selected
+        ).strip()
+        if not quote:
+            continue
+        locators = [str(segment.get("locator") or "") for segment in selected]
+        first_locator = locators[0]
+        last_locator = locators[-1]
+        source_locator = (
+            first_locator
+            if first_locator == last_locator
+            else f"{first_locator}–{last_locator}"
+        )
+        drafts.append(
+            EvidenceDraft(
+                material_id=int(material_id),
+                segment_id=int(card.segment_ids[0]),
+                evidence_type=EvidenceType(card.evidence_type),
+                title=card.title,
+                quote=quote,
+                summary=card.summary,
+                source_locator=source_locator,
+            )
+        )
+    return drafts
 
 
 def _storage_dirs(db: Any) -> tuple[Path, Path]:
@@ -195,16 +238,62 @@ def import_text_material(
 
     evidence_card_ids: list[int] = []
     if consent == ConsentStatus.CONFIRMED.value:
-        drafts = generate_evidence_drafts(
-            material_id,
-            segments,
-            source_role,
-            max_cards=_MAX_EVIDENCE_CARDS_PER_MATERIAL,
-            target_chars=_EVIDENCE_CARD_TARGET_CHARS,
-        )
+        drafts: list[EvidenceDraft] | None = None
+        used_semantic_cards = False
+        if llm_settings.configured:
+            try:
+                advice = request_evidence_card_generation(
+                    segments,
+                    consent_status=consent,
+                    source_role=source_role,
+                    context=context,
+                    max_cards=_MAX_EVIDENCE_CARDS_PER_MATERIAL,
+                )
+                drafts = _model_card_drafts(material_id, segments, advice)
+                used_semantic_cards = bool(drafts)
+                db.create_agent_run(
+                    project_id,
+                    "llm_evidence_card_generation",
+                    status="completed",
+                    input_data={
+                        "material_id": material_id,
+                        "segment_count": len(segments),
+                    },
+                    output_data=advice.as_dict(),
+                )
+                if not drafts:
+                    warnings.append(
+                        "材料已完成语义整理，但没有抽取出明确事实，已使用本地规则生成兜底审核卡。"
+                    )
+            except (LLMError, ValueError, KeyError) as exc:
+                db.create_agent_run(
+                    project_id,
+                    "llm_evidence_card_generation",
+                    status="failed",
+                    input_data={
+                        "material_id": material_id,
+                        "segment_count": len(segments),
+                    },
+                    error_message=str(exc),
+                )
+                warnings.append(
+                    "语义整理未完成，已使用本地规则生成审核卡，请人工核对内容边界。"
+                )
+
+        if drafts is None or not drafts:
+            drafts = generate_evidence_drafts(
+                material_id,
+                segments,
+                source_role,
+                max_cards=_MAX_EVIDENCE_CARDS_PER_MATERIAL,
+                target_chars=_EVIDENCE_CARD_TARGET_CHARS,
+            )
         if len(drafts) < len(segments):
+            generation_action = (
+                "语义整理生成" if used_semantic_cards else "合并生成"
+            )
             warnings.append(
-                f"正文已保存为 {len(segments)} 个可追溯片段，并合并生成 "
+                f"正文已保存为 {len(segments)} 个可追溯片段，并{generation_action} "
                 f"{len(drafts)} 张审核卡，避免长材料产生过多重复审核项。"
             )
         if not drafts:

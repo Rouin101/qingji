@@ -49,8 +49,8 @@ settings = Settings.from_env()
 class LLMSettings:
     """Opt-in configuration for the v1.1 model-assistance layer.
 
-    The default is deliberately disabled.  The model is only contacted when
-    the user explicitly asks for assistance from the claim page.
+    The default is deliberately disabled. The model is contacted only during
+    user-triggered, consent-gated generation or review actions.
     """
 
     enabled: bool

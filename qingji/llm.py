@@ -8,9 +8,9 @@ trust confirmation and the storage workflow still enforces project boundaries.
 It uses an OpenAI-compatible chat-completions endpoint so the provider can be
 changed through environment variables without changing the product logic.
 
-Only approved, confirmed evidence-card fields are placed in the request.  The
-fields are redacted once more at this boundary and raw material paths or raw
-material text are never included.
+Only consent-confirmed, boundary-redacted material fields are placed in model
+requests. The fields are redacted once more at this boundary and raw material
+paths or raw material text are never included.
 """
 
 from __future__ import annotations
@@ -88,6 +88,44 @@ class EvidenceAdvice:
 
 
 @dataclass(frozen=True)
+class EvidenceCardGenerationItem:
+    """One semantic card draft anchored to persisted redacted segments."""
+
+    segment_ids: tuple[int, ...]
+    title: str
+    summary: str
+    evidence_type: str
+    uncertainties: tuple[str, ...]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "segment_ids": list(self.segment_ids),
+            "title": self.title,
+            "summary": self.summary,
+            "evidence_type": self.evidence_type,
+            "uncertainties": list(self.uncertainties),
+        }
+
+
+@dataclass(frozen=True)
+class EvidenceCardGenerationAdvice:
+    """Semantic card drafts returned by the model; never auto-approved."""
+
+    cards: tuple[EvidenceCardGenerationItem, ...]
+    uncertainties: tuple[str, ...]
+    model: str
+    chunk_count: int
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "model": self.model,
+            "chunk_count": self.chunk_count,
+            "cards": [card.as_dict() for card in self.cards],
+            "uncertainties": list(self.uncertainties),
+        }
+
+
+@dataclass(frozen=True)
 class EvidenceReviewAdvice:
     """A bounded model recommendation for one evidence-card review."""
 
@@ -158,6 +196,7 @@ _MAX_CLAIM_CHARS = 500
 _MAX_FIELD_CHARS = 1200
 _MAX_LIST_ITEMS = 8
 _CLAIM_EVIDENCE_REVIEW_MAX_CARDS = 24
+_SEMANTIC_CARD_MAX_CARDS = 24
 
 
 def _status(value: Any) -> str:
@@ -720,6 +759,261 @@ def request_evidence_assistance(
         post_json=post,
     )
     return _parse_evidence_advice(response, model=current.model)
+
+
+def _generation_segment_fields(
+    segments: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for index, segment in enumerate(segments, start=1):
+        raw_segment_id = segment.get("id")
+        if raw_segment_id is None:
+            raw_segment_id = segment.get("segment_id")
+        try:
+            segment_id = int(raw_segment_id)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("每个材料片段都必须包含整数 id。") from exc
+        text = _clean_text(
+            segment.get("redacted_text", segment.get("text", "")),
+            limit=1000,
+        )
+        if not text:
+            continue
+        try:
+            sequence_no = int(segment.get("sequence_no", index))
+        except (TypeError, ValueError):
+            sequence_no = index
+        normalized.append(
+            {
+                "id": segment_id,
+                "sequence_no": sequence_no,
+                "text": text,
+                "locator": _clean_text(
+                    segment.get("locator", ""),
+                    limit=120,
+                ),
+            }
+        )
+    return normalized
+
+
+def build_evidence_card_generation_prompt(
+    segments: Sequence[Mapping[str, Any]],
+    *,
+    consent_status: Any = ConsentStatus.CONFIRMED.value,
+    source_role: str = "",
+    context: str = "",
+    max_cards: int = _SEMANTIC_CARD_MAX_CARDS,
+    max_context_chars: int = 12000,
+) -> tuple[str, tuple[int, ...]]:
+    """Build a bounded prompt for semantic card extraction from redacted text."""
+
+    if _status(consent_status) != ConsentStatus.CONFIRMED.value:
+        raise ValueError("未确认授权的材料不能请求模型生成证据卡。")
+    if isinstance(max_cards, bool) or not isinstance(max_cards, int) or max_cards <= 0:
+        raise ValueError("max_cards must be a positive integer")
+    if isinstance(max_context_chars, bool) or not isinstance(max_context_chars, int):
+        raise ValueError("max_context_chars must be an integer")
+
+    normalized = _generation_segment_fields(segments)
+    if not normalized:
+        raise ValueError("当前材料没有可供模型处理的脱敏片段。")
+
+    source = {
+        "source_role": _clean_text(source_role, limit=100),
+        "context": _clean_text(context, limit=200),
+    }
+    lines = [
+        json.dumps(
+            {
+                "segment_id": item["id"],
+                "sequence_no": item["sequence_no"],
+                "locator": item["locator"],
+                "text": item["text"],
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        for item in normalized
+    ]
+    prompt = (
+        "你是青迹的语义证据卡生成模块。以下是已经确认授权、再次脱敏后的材料片段。"
+        "请只从片段中抽取适合人工审核的具体事实、受访者陈述、工作人员说明、现场观察"
+        "或正式记录。不得补造人物、数字、时间、地点、因果关系或原文没有的事实；"
+        "不得把标题、目录、团队分析、总结判断、建议、证据边界或群体化推论单独生成"
+        "为事实证据卡；不要把互不相关的片段拼成一张卡。一个事实足够时只引用一个片段，"
+        "只有同一事实确实跨越多个相邻片段时才合并。模型只返回片段编号，引用原文由本地"
+        "程序按编号拼回，因此不要返回 quote。每张卡都必须能被人工根据原片段复核，"
+        f"最多生成 {max_cards} 张；如果没有合适的事实，cards 可以为空。只返回 JSON，"
+        "不要 Markdown 围栏。\n\n"
+        "JSON 字段必须为：cards（数组，每项包含 segment_ids、title、summary、"
+        "evidence_type、uncertainties）；segment_ids 只能使用输入中的 segment_id，"
+        "必须按材料顺序排列且连续；evidence_type 只能是 interview_statement、"
+        "staff_explanation、field_observation、formal_record、team_analysis 之一；"
+        "title 不超过 80 字，summary 不超过 240 字，uncertainties 最多 8 条；"
+        "还可以返回 uncertainties（数组）。\n\n"
+        f"材料元数据：{json.dumps(source, ensure_ascii=False)}\n"
+        "材料片段（每行一个 JSON 对象）：\n"
+        + "\n".join(lines)
+    )
+    return prompt[:max_context_chars], tuple(int(item["id"]) for item in normalized)
+
+
+def _parse_evidence_card_generation(
+    response: Mapping[str, Any],
+    *,
+    allowed_ids: Sequence[int],
+    max_cards: int,
+    model: str,
+) -> tuple[tuple[EvidenceCardGenerationItem, ...], tuple[str, ...]]:
+    data = _extract_json_object(_response_content(response))
+    raw_cards = data.get("cards")
+    if not isinstance(raw_cards, list):
+        raise LLMResponseError("模型字段 cards 必须是数组。")
+    if len(raw_cards) > max_cards:
+        raise LLMResponseError(f"模型生成的证据卡超过本批次上限 {max_cards} 张。")
+
+    ordered_ids = tuple(int(item) for item in allowed_ids)
+    position = {segment_id: index for index, segment_id in enumerate(ordered_ids)}
+    used_ids: set[int] = set()
+    parsed: list[EvidenceCardGenerationItem] = []
+    allowed_types = {item.value for item in EvidenceType}
+    for raw_item in raw_cards:
+        if not isinstance(raw_item, Mapping):
+            raise LLMResponseError("模型语义证据卡格式不正确。")
+        raw_ids = raw_item.get("segment_ids")
+        if not isinstance(raw_ids, list) or not raw_ids:
+            raise LLMResponseError("模型语义证据卡必须包含非空 segment_ids 数组。")
+        try:
+            segment_ids = tuple(int(item) for item in raw_ids)
+        except (TypeError, ValueError) as exc:
+            raise LLMResponseError("模型语义证据卡引用了非整数片段编号。") from exc
+        if len(set(segment_ids)) != len(segment_ids):
+            raise LLMResponseError("模型语义证据卡重复引用了同一片段。")
+        if any(segment_id not in position for segment_id in segment_ids):
+            raise LLMResponseError("模型语义证据卡引用了本批次之外的片段。")
+        positions = [position[segment_id] for segment_id in segment_ids]
+        if positions != list(range(positions[0], positions[0] + len(positions))):
+            raise LLMResponseError("模型语义证据卡只能引用连续的相邻片段。")
+        if used_ids.intersection(segment_ids):
+            raise LLMResponseError("模型语义证据卡之间不能重复占用片段。")
+
+        title = _clean_text(raw_item.get("title"), limit=80)
+        summary = _clean_text(raw_item.get("summary"), limit=240)
+        evidence_type = _clean_text(raw_item.get("evidence_type"), limit=100)
+        if not title or not summary:
+            raise LLMResponseError("模型语义证据卡缺少 title 或 summary。")
+        if evidence_type not in allowed_types:
+            raise LLMResponseError("模型返回了不受支持的证据类型。")
+        parsed.append(
+            EvidenceCardGenerationItem(
+                segment_ids=segment_ids,
+                title=title,
+                summary=summary,
+                evidence_type=evidence_type,
+                uncertainties=_string_list(
+                    raw_item.get("uncertainties"), field="uncertainties"
+                ),
+            )
+        )
+        used_ids.update(segment_ids)
+
+    return tuple(parsed), _string_list(data.get("uncertainties"), field="uncertainties")
+
+
+def request_evidence_card_generation(
+    segments: Sequence[Mapping[str, Any]],
+    *,
+    consent_status: Any = ConsentStatus.CONFIRMED.value,
+    source_role: str = "",
+    context: str = "",
+    max_cards: int = _SEMANTIC_CARD_MAX_CARDS,
+    config: LLMSettings | None = None,
+    post_json: Callable[
+        [str, Mapping[str, str], Mapping[str, Any], float], Mapping[str, Any]
+    ]
+    | None = None,
+) -> EvidenceCardGenerationAdvice:
+    """Generate semantic drafts in a few bounded requests from redacted segments."""
+
+    current = config or llm_settings
+    if not current.configured:
+        raise LLMConfigurationError(
+            "尚未启用大模型证据卡生成。请配置 QINGJI_LLM_ENABLED、"
+            "QINGJI_LLM_API_KEY 和 QINGJI_LLM_MODEL。"
+        )
+    if isinstance(max_cards, bool) or not isinstance(max_cards, int) or max_cards <= 0:
+        raise ValueError("max_cards must be a positive integer")
+    if _status(consent_status) != ConsentStatus.CONFIRMED.value:
+        raise ValueError("未确认授权的材料不能请求模型生成证据卡。")
+
+    normalized = _generation_segment_fields(segments)
+    if not normalized:
+        raise ValueError("当前材料没有可供模型处理的脱敏片段。")
+
+    # Keep each request small enough for a long report while sending many
+    # source segments in one round trip.  The original redacted text is never
+    # reconstructed from raw files here.
+    target_chars = max(1800, min(current.max_context_chars - 1800, 9000))
+    batches: list[list[dict[str, Any]]] = []
+    current_batch: list[dict[str, Any]] = []
+    current_chars = 0
+    for item in normalized:
+        item_chars = len(item["text"]) + 120
+        if current_batch and current_chars + item_chars > target_chars:
+            batches.append(current_batch)
+            current_batch = []
+            current_chars = 0
+        current_batch.append(item)
+        current_chars += item_chars
+    if current_batch:
+        batches.append(current_batch)
+
+    post = post_json or _default_post_json
+    all_cards: list[EvidenceCardGenerationItem] = []
+    all_uncertainties: list[str] = []
+    remaining_cards = max_cards
+    remaining_batches = len(batches)
+    for batch in batches:
+        batch_limit = max(
+            1,
+            min(
+                remaining_cards,
+                (remaining_cards + remaining_batches - 1) // remaining_batches,
+            ),
+        )
+        prompt, allowed_ids = build_evidence_card_generation_prompt(
+            batch,
+            consent_status=consent_status,
+            source_role=source_role,
+            context=context,
+            max_cards=batch_limit,
+            max_context_chars=current.max_context_chars,
+        )
+        response = _call_chat_completion(
+            prompt,
+            config=current,
+            post_json=post,
+        )
+        cards, uncertainties = _parse_evidence_card_generation(
+            response,
+            allowed_ids=allowed_ids,
+            max_cards=batch_limit,
+            model=current.model,
+        )
+        all_cards.extend(cards)
+        all_uncertainties.extend(uncertainties)
+        remaining_cards -= len(cards)
+        remaining_batches -= 1
+        if remaining_cards <= 0:
+            break
+
+    return EvidenceCardGenerationAdvice(
+        cards=tuple(all_cards[:max_cards]),
+        uncertainties=tuple(dict.fromkeys(all_uncertainties))[:_MAX_LIST_ITEMS],
+        model=current.model,
+        chunk_count=len(batches),
+    )
 
 
 def build_evidence_review_prompt(

@@ -11,12 +11,14 @@ from qingji.llm import (
     build_claim_assistance_prompt,
     build_claim_evidence_review_prompt,
     build_evidence_assistance_prompt,
+    build_evidence_card_generation_prompt,
     build_evidence_review_batch_prompt,
     build_evidence_review_prompt,
     probe_llm_connection,
     request_claim_evidence_review,
     request_evidence_review_batch,
     request_evidence_review,
+    request_evidence_card_generation,
     request_evidence_assistance,
     request_claim_assistance,
 )
@@ -284,6 +286,117 @@ class LLMTests(unittest.TestCase):
                     "quote": "操作时需要帮助。",
                     "evidence_type": "interview_statement",
                 },
+                config=_config(),
+                post_json=fake_post,
+            )
+
+    def test_semantic_card_generation_uses_segment_ids_and_redacts_prompt(self) -> None:
+        captured: dict[str, object] = {}
+
+        def fake_post(url, headers, payload, timeout):
+            captured["payload"] = payload
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                '{"cards":['
+                                '{"segment_ids":[11],"title":"线上办理需要帮助",'
+                                '"summary":"一名受访者提到线上办理时需要工作人员帮助。",'
+                                '"evidence_type":"interview_statement",'
+                                '"uncertainties":["仅代表该来源"]},'
+                                '{"segment_ids":[12,13],"title":"窗口提供协助",'
+                                '"summary":"相邻片段说明工作人员提供了现场协助。",'
+                                '"evidence_type":"staff_explanation",'
+                                '"uncertainties":[]}'
+                                '],"uncertainties":[]}'
+                            )
+                        }
+                    }
+                ]
+            }
+
+        prompt, allowed_ids = build_evidence_card_generation_prompt(
+            [
+                {
+                    "id": 11,
+                    "sequence_no": 1,
+                    "locator": "第1段",
+                    "redacted_text": "受访者 test@example.com 表示需要帮助。",
+                },
+                {
+                    "id": 12,
+                    "sequence_no": 2,
+                    "locator": "第2段",
+                    "redacted_text": "工作人员说明可以现场协助。",
+                },
+                {
+                    "id": 13,
+                    "sequence_no": 3,
+                    "locator": "第3段",
+                    "redacted_text": "协助流程在窗口完成。",
+                },
+            ],
+            source_role="受访者",
+            context="访谈",
+        )
+        self.assertEqual(allowed_ids, (11, 12, 13))
+        self.assertNotIn("test@example.com", prompt)
+        self.assertIn("[邮箱]", prompt)
+
+        advice = request_evidence_card_generation(
+            [
+                {
+                    "id": 11,
+                    "sequence_no": 1,
+                    "locator": "第1段",
+                    "redacted_text": "受访者 test@example.com 表示需要帮助。",
+                },
+                {
+                    "id": 12,
+                    "sequence_no": 2,
+                    "locator": "第2段",
+                    "redacted_text": "工作人员说明可以现场协助。",
+                },
+                {
+                    "id": 13,
+                    "sequence_no": 3,
+                    "locator": "第3段",
+                    "redacted_text": "协助流程在窗口完成。",
+                },
+            ],
+            config=_config(),
+            post_json=fake_post,
+        )
+        self.assertEqual(len(advice.cards), 2)
+        self.assertEqual(advice.cards[0].segment_ids, (11,))
+        self.assertEqual(advice.cards[1].segment_ids, (12, 13))
+        self.assertNotIn("test@example.com", str(captured["payload"]))
+
+    def test_semantic_card_generation_rejects_non_contiguous_segments(self) -> None:
+        def fake_post(url, headers, payload, timeout):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                '{"cards":[{"segment_ids":[1,3],'
+                                '"title":"标题","summary":"摘要",'
+                                '"evidence_type":"formal_record",'
+                                '"uncertainties":[]}],"uncertainties":[]}'
+                            )
+                        }
+                    }
+                ]
+            }
+
+        with self.assertRaises(LLMResponseError):
+            request_evidence_card_generation(
+                [
+                    {"id": 1, "redacted_text": "第一段"},
+                    {"id": 2, "redacted_text": "第二段"},
+                    {"id": 3, "redacted_text": "第三段"},
+                ],
                 config=_config(),
                 post_json=fake_post,
             )

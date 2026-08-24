@@ -7,9 +7,11 @@ import tempfile
 import unittest
 from unittest.mock import patch
 from pathlib import Path
+from types import SimpleNamespace
 
 from qingji.claims import validate_citation_ids
 from qingji.db import Database
+from qingji.llm import EvidenceCardGenerationAdvice, EvidenceCardGenerationItem
 from qingji.models import (
     ConsentStatus,
     ReviewStatus,
@@ -108,6 +110,65 @@ class WorkflowTestCase(unittest.TestCase):
             {card["review_status"] for card in cards}, {"approved"}
         )
         self.assertEqual(cards[0]["material_id"], result.material_id)
+
+    def test_confirmed_import_uses_model_cards_and_reconstructs_exact_quotes(self) -> None:
+        advice = EvidenceCardGenerationAdvice(
+            cards=(
+                EvidenceCardGenerationItem(
+                    segment_ids=(1,),
+                    title="平台操作困难",
+                    summary="材料记录了线上操作中的具体困难。",
+                    evidence_type="formal_record",
+                    uncertainties=(),
+                ),
+                EvidenceCardGenerationItem(
+                    segment_ids=(2,),
+                    title="后续得到协助",
+                    summary="材料记录了工作人员提供帮助。",
+                    evidence_type="formal_record",
+                    uncertainties=(),
+                ),
+            ),
+            uncertainties=(),
+            model="test-model",
+            chunk_count=1,
+        )
+
+        with patch(
+            "qingji.workflow.llm_settings",
+            SimpleNamespace(configured=True),
+        ), patch(
+            "qingji.workflow.request_evidence_card_generation",
+            return_value=advice,
+        ) as generate_cards:
+            result = import_text_material(
+                self.db,
+                self.project_id,
+                "第一条事实。第二条事实。",
+                original_filename="模型卡片测试.txt",
+                source_role="正式记录",
+                context="模型卡片测试场景",
+                captured_at="2026-08-24",
+                consent_status=ConsentStatus.CONFIRMED,
+                custom_sensitive_terms=None,
+                is_fictional=False,
+            )
+
+        generate_cards.assert_called_once()
+        cards = [
+            self.db.get_evidence_card(card_id)
+            for card_id in result.evidence_card_ids
+        ]
+        self.assertEqual(
+            [card["quote"] for card in cards],
+            ["第一条事实。", "第二条事实。"],
+        )
+        self.assertEqual(
+            self.db.get_latest_project_run(
+                self.project_id, "llm_evidence_card_generation"
+            )["status"],
+            "completed",
+        )
 
     def test_unauthorized_material_has_no_cards_and_is_not_citable(self) -> None:
         result = self._import(DIFFICULTY_TEXT, consent="unknown")
