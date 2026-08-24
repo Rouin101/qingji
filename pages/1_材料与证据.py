@@ -280,7 +280,8 @@ with tab_import:
             consent_choice = st.radio(
                 "记录与使用授权",
                 options=["confirmed", "unknown", "denied"],
-                index=1,
+                index=0,
+                key="material_consent_choice",
                 format_func=lambda item: CONSENT_LABELS[item],
                 horizontal=True,
                 help="未确认或被拒绝授权的材料不会成为可引用证据。",
@@ -442,7 +443,7 @@ with tab_import:
                 batch_consent_choice = st.radio(
                     "批量记录与使用授权",
                     options=["confirmed", "unknown", "denied"],
-                    index=1,
+                    index=0,
                     key="batch_consent_choice",
                     format_func=lambda item: CONSENT_LABELS[item],
                     horizontal=True,
@@ -658,16 +659,16 @@ with tab_review:
                 rejected_count = 0
                 rechecked_claim_ids: set[int] = set()
                 model_updates: list[dict] = []
-                batch_size = max(2, int(getattr(llm_settings, "review_batch_size", 8)))
                 with st.spinner(
-                    f"正在让模型分批审核 {len(authorized_draft_cards)} 张证据卡（每批 {batch_size} 张）……"
+                    f"正在让模型审核全部 {len(authorized_draft_cards)} 张证据卡……"
                 ):
-                    for offset in range(0, len(authorized_draft_cards), batch_size):
-                        batch = authorized_draft_cards[offset : offset + batch_size]
+                    remaining_cards = list(authorized_draft_cards)
+                    while remaining_cards:
+                        batch = remaining_cards
                         run_input = {
                             "evidence_ids": [int(card["id"]) for card in batch],
                             "model": llm_settings.model,
-                            "review_source": "bulk_batch",
+                            "review_source": "bulk_all",
                         }
                         try:
                             advice = request_evidence_review_batch(
@@ -687,7 +688,7 @@ with tab_review:
                                 if card is None:
                                     raise ValueError(
                                         f"模型返回了当前批次之外的证据 E{evidence_id}。"
-                                    )
+                                )
                                 model_updates.append(
                                     {
                                         "evidence_card_id": int(evidence_id),
@@ -700,9 +701,21 @@ with tab_review:
                                         "change_reason": item.review_reason,
                                     }
                                 )
+                            reviewed_ids = {
+                                int(evidence_id)
+                                for evidence_id, _ in advice.reviews
+                            }
+                            if not reviewed_ids:
+                                raise ValueError("模型本次未返回任何证据卡审核结果。")
+                            remaining_cards = [
+                                card
+                                for card in remaining_cards
+                                if int(card["id"]) not in reviewed_ids
+                            ]
                         except Exception as exc:
-                            batch_ids = "、".join(f"E{card['id']}" for card in batch)
-                            model_failures.append(f"{batch_ids}：{exc}")
+                            model_failures.append(
+                                f"剩余 {len(batch)} 张证据卡：{exc}"
+                            )
                             try:
                                 db.create_agent_run(
                                     project_id,
@@ -713,6 +726,7 @@ with tab_review:
                                 )
                             except Exception:
                                 pass
+                            break
                 if model_updates:
                     try:
                         results = review_evidence_cards(db, model_updates)

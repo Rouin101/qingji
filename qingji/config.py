@@ -59,7 +59,6 @@ class LLMSettings:
     model: str
     timeout_seconds: float
     max_context_chars: int
-    review_batch_size: int = 8
 
     @classmethod
     def from_env(cls) -> "LLMSettings":
@@ -79,11 +78,6 @@ class LLMSettings:
         except ValueError:
             max_context_chars = 12000
         max_context_chars = min(max(max_context_chars, 1000), 50000)
-        try:
-            review_batch_size = int(os.getenv("QINGJI_LLM_REVIEW_BATCH_SIZE", "8"))
-        except ValueError:
-            review_batch_size = 8
-        review_batch_size = min(max(review_batch_size, 2), 20)
         return cls(
             enabled=enabled,
             base_url=os.getenv("QINGJI_LLM_BASE_URL", "https://api.openai.com/v1").strip(),
@@ -91,7 +85,6 @@ class LLMSettings:
             model=os.getenv("QINGJI_LLM_MODEL", "").strip(),
             timeout_seconds=timeout_seconds,
             max_context_chars=max_context_chars,
-            review_batch_size=review_batch_size,
         )
 
     @property

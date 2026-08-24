@@ -76,6 +76,21 @@ class AppPageSmokeTest(unittest.TestCase):
         self.assertEqual(app.text_area[0].value, draft_text)
         self.assertTrue(any("勾选" in item.value for item in app.warning))
 
+    def test_material_consent_defaults_to_confirmed(self) -> None:
+        app = AppTest.from_file("app.py", default_timeout=30)
+        app.run()
+        app.switch_page("pages/1_材料与证据.py")
+        app.run()
+
+        self.assertEqual(
+            app.radio(key="material_consent_choice").value,
+            "confirmed",
+        )
+        self.assertEqual(
+            app.radio(key="batch_consent_choice").value,
+            "confirmed",
+        )
+
     def test_evidence_review_defaults_to_approved(self) -> None:
         database = get_database()
         project_id = database.create_project("证据审核默认状态检查")
