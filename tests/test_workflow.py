@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from qingji.claims import validate_citation_ids
@@ -541,6 +542,24 @@ class WorkflowTestCase(unittest.TestCase):
         links = self.db.list_claim_evidence_links(stored.claim_id)
         self.assertEqual([link["relation"] for link in links], ["context"])
         self.assertIn("模型复核", links[0]["rationale"])
+
+    def test_confirmed_import_has_full_text_fallback_card(self) -> None:
+        with patch("qingji.workflow.split_text", return_value=[]):
+            result = import_text_material(
+                self.db,
+                self.project_id,
+                "即使分段器异常，这份脱敏正文也应保留为可审核证据。",
+                original_filename="分段异常材料.txt",
+                source_role="受访者",
+                context="分段兜底测试",
+                captured_at="2026-08-24",
+                consent_status=ConsentStatus.CONFIRMED,
+                custom_sensitive_terms=None,
+                is_fictional=True,
+            )
+
+        self.assertEqual(len(result.evidence_card_ids), 1)
+        self.assertTrue(any("兜底卡" in warning for warning in result.warnings))
 
 
 if __name__ == "__main__":

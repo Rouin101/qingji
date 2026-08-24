@@ -74,7 +74,7 @@ class AppPageSmokeTest(unittest.TestCase):
 
         self.assertEqual(app.exception, [])
         self.assertEqual(app.text_area[0].value, draft_text)
-        self.assertTrue(any("采集场景" in item.value for item in app.error))
+        self.assertTrue(any("勾选" in item.value for item in app.warning))
 
     def test_evidence_review_defaults_to_approved(self) -> None:
         database = get_database()

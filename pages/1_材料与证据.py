@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date
+import hashlib
 
 import streamlit as st
 
@@ -13,6 +14,7 @@ from qingji.llm import (
     request_evidence_assistance,
     request_evidence_review_batch,
 )
+from qingji.metadata import infer_material_metadata
 from qingji.models import ConsentStatus
 from qingji.ui import (
     CONSENT_LABELS,
@@ -50,6 +52,7 @@ _SOURCE_ROLE_OPTIONS = [
     "正式记录",
     "团队分析",
 ]
+_SINGLE_SOURCE_ROLE_OPTIONS = ["请选择", *_SOURCE_ROLE_OPTIONS]
 
 
 def render_review_history(db, project_id: int, evidence_card_id: int) -> None:
@@ -191,6 +194,54 @@ with tab_import:
             uploaded_error = str(exc)
             st.error(uploaded_error)
 
+    # Prefer explicit local extraction for uploaded files.  A new file resets
+    # only the metadata fields so a previous material's values are not reused.
+    for key, default in (
+        ("material_source_role", "请选择"),
+        ("material_context", ""),
+        ("material_captured_at", None),
+    ):
+        st.session_state.setdefault(key, default)
+    uploaded_metadata_suggestion = infer_material_metadata(
+        uploaded_text,
+        uploaded.name if uploaded is not None else "",
+    )
+    if uploaded_text and not uploaded_error:
+        metadata_fingerprint = hashlib.sha256(
+            f"{uploaded.name}\n{uploaded_text}".encode("utf-8")
+        ).hexdigest()
+        if st.session_state.get("material_metadata_fingerprint") != metadata_fingerprint:
+            st.session_state["material_metadata_fingerprint"] = metadata_fingerprint
+            st.session_state["material_source_role"] = (
+                uploaded_metadata_suggestion.source_role or "请选择"
+            )
+            st.session_state["material_context"] = uploaded_metadata_suggestion.context
+            st.session_state["material_captured_at"] = (
+                uploaded_metadata_suggestion.captured_at
+            )
+
+    if uploaded_metadata_suggestion.has_suggestions:
+        suggestion_parts = []
+        if uploaded_metadata_suggestion.source_role:
+            suggestion_parts.append(
+                f"来源角色={uploaded_metadata_suggestion.source_role}"
+            )
+        if uploaded_metadata_suggestion.context:
+            suggestion_parts.append(
+                f"采集场景={uploaded_metadata_suggestion.context}"
+            )
+        if uploaded_metadata_suggestion.captured_at:
+            suggestion_parts.append(
+                f"采集日期={uploaded_metadata_suggestion.captured_at.isoformat()}"
+            )
+        st.caption(
+            "已从材料正文或文件名提取元数据建议，请在提交前核对："
+            + "；".join(suggestion_parts)
+        )
+    metadata_notice = st.session_state.pop("material_metadata_notice", "")
+    if metadata_notice:
+        st.info(metadata_notice)
+
     # Keep all fields after submission so validation errors never erase a
     # partially completed material entry. Successful imports also remain
     # visible until the user intentionally replaces them.
@@ -220,14 +271,21 @@ with tab_import:
             )
             source_role = st.selectbox(
                 "来源角色",
-                _SOURCE_ROLE_OPTIONS,
+                _SINGLE_SOURCE_ROLE_OPTIONS,
+                key="material_source_role",
                 help="来源角色会影响默认的证据类型，但仍需人工审核。",
             )
-            captured_at = st.date_input("采集日期", value=date.today())
+            captured_at = st.date_input(
+                "采集日期",
+                value=st.session_state.get("material_captured_at"),
+                key="material_captured_at",
+                help="优先从材料正文或文件名识别；识别不到时请手动选择。",
+            )
         with metadata_right:
             context = st.text_input(
                 "采集场景",
-                value="",
+                value=st.session_state.get("material_context", ""),
+                key="material_context",
                 placeholder="说明材料获取的时间、地点或活动场景",
             )
             consent_choice = st.radio(
@@ -253,18 +311,55 @@ with tab_import:
             type="primary",
             width="stretch",
         )
+        autofill_submitted = st.form_submit_button(
+            "自动识别并填充材料信息",
+            help="优先使用本地规则读取正文和文件名；识别不到的字段仍需手动填写。",
+        )
+
+    if autofill_submitted:
+        suggestion = infer_material_metadata(text, filename)
+        if suggestion.source_role:
+            st.session_state["material_source_role"] = suggestion.source_role
+        if suggestion.context:
+            st.session_state["material_context"] = suggestion.context
+        if suggestion.captured_at:
+            st.session_state["material_captured_at"] = suggestion.captured_at
+        if suggestion.has_suggestions:
+            st.session_state["material_metadata_notice"] = (
+                "已填入可识别的材料信息，请核对后再生成证据卡。"
+            )
+        else:
+            st.session_state["material_metadata_notice"] = (
+                "未从材料中找到明确元数据，请手动填写采集场景、来源角色和采集日期。"
+            )
+        st.rerun()
 
     if submitted:
+        submission_suggestion = infer_material_metadata(text, filename)
+        effective_source_role = (
+            source_role
+            if source_role != "请选择"
+            else (submission_suggestion.source_role or "")
+        )
+        effective_context = context.strip() or submission_suggestion.context
+        effective_captured_at = captured_at or submission_suggestion.captured_at
         if uploaded_error:
             st.error("请先解决文件编码问题。")
         elif not text.strip():
             st.error("材料正文不能为空。")
         elif not filename.strip():
             st.error("请填写材料名称，便于后续追溯。")
-        elif not context.strip():
-            st.error("请填写采集场景。")
         elif not material_confirmed:
-            st.error("请先确认材料属性、授权状态和脱敏复核责任。")
+            st.warning(
+                "请先勾选“我确认已如实填写来源和授权状态”，"
+                "确认后才能生成证据卡。"
+            )
+        elif not effective_source_role:
+            st.error("未能从材料识别来源角色，请手动选择来源角色。")
+        elif not effective_context:
+            st.error("未能从材料识别采集场景，请手动填写采集场景。")
+        elif effective_captured_at is None:
+            st.error("未能从材料识别采集日期，请手动选择采集日期。")
         else:
             custom_terms = [
                 item.strip()
@@ -278,9 +373,9 @@ with tab_import:
                         project_id,
                         text,
                         original_filename=filename.strip(),
-                        source_role=source_role,
-                        context=context.strip(),
-                        captured_at=captured_at.isoformat(),
+                        source_role=effective_source_role,
+                        context=effective_context,
+                        captured_at=effective_captured_at.isoformat(),
                         consent_status=ConsentStatus(consent_choice),
                         custom_sensitive_terms=custom_terms,
                         is_fictional=is_fictional,
@@ -289,10 +384,16 @@ with tab_import:
                 st.error(f"材料导入失败：{exc}")
             else:
                 st.session_state["last_import_result"] = result
-                st.success(
-                    f"材料 M{result.material_id} 已保存，生成 "
-                    f"{len(result.evidence_card_ids)} 张待审核证据卡。"
-                )
+                if consent_choice == "confirmed" and not result.evidence_card_ids:
+                    st.error(
+                        "材料已保存，但没有生成证据卡。请不要继续引用这份材料，"
+                        "并检查脱敏文本或重新导入。"
+                    )
+                else:
+                    st.success(
+                        f"材料 M{result.material_id} 已保存，生成 "
+                        f"{len(result.evidence_card_ids)} 张待审核证据卡。"
+                    )
                 if result.warnings:
                     for warning in result.warnings:
                         st.warning(warning)
@@ -367,10 +468,12 @@ with tab_import:
         if batch_submitted:
             if not batch_files:
                 st.error("请先选择至少一个文字文件。")
+            elif not batch_confirmed:
+                st.warning(
+                    "请先勾选批量材料确认框，确认来源、授权状态和脱敏复核责任。"
+                )
             elif not batch_context.strip():
                 st.error("请填写批量采集场景。")
-            elif not batch_confirmed:
-                st.error("请先确认这批材料的来源、授权状态和脱敏复核责任。")
             else:
                 custom_terms = [
                     item.strip()
@@ -434,6 +537,14 @@ with tab_import:
                                 )
                                 for warning in result.warnings:
                                     st.caption(f"M{result.material_id}：{warning}")
+                                if (
+                                    batch_consent_choice == "confirmed"
+                                    and not result.evidence_card_ids
+                                ):
+                                    st.error(
+                                        f"M{result.material_id} 已确认授权，但没有生成证据卡，"
+                                        "请检查该文件是否包含可提取文字。"
+                                    )
                     if failures:
                         st.error("以下文件未能导入：" + "；".join(failures))
 

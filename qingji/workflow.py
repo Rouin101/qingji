@@ -147,6 +147,7 @@ def import_text_material(
 
     pii_kinds = sorted({span.kind for span in redaction.spans})
     segments: list[dict[str, Any]] = []
+    used_segment_fallback = False
     for chunk in split_text(redaction.redacted_text):
         segment_id = db.create_segment(
             material_id,
@@ -159,7 +160,31 @@ def import_text_material(
             {"id": segment_id, "redacted_text": chunk.text, "locator": chunk.locator}
         )
 
+    # A non-empty material should never silently finish with no segment.  This
+    # protects imports whose extracted text contains unusual separators or
+    # invisible characters that defeat the normal sentence splitter.
+    if not segments and redaction.redacted_text.strip():
+        used_segment_fallback = True
+        segment_id = db.create_segment(
+            material_id,
+            1,
+            redaction.redacted_text.strip(),
+            locator="材料全文",
+            pii_flags=pii_kinds,
+        )
+        segments.append(
+            {
+                "id": segment_id,
+                "redacted_text": redaction.redacted_text.strip(),
+                "locator": "材料全文",
+            }
+        )
+
     warnings: list[str] = []
+    if used_segment_fallback:
+        warnings.append(
+            "正常分段没有产生片段，已使用脱敏材料全文作为兜底卡输入，请人工核对。"
+        )
     if pii_kinds:
         warnings.append(
             "检测到敏感信息（手机号、身份证号、邮箱或自定义词），"
@@ -181,6 +206,32 @@ def import_text_material(
             warnings.append(
                 f"正文已保存为 {len(segments)} 个可追溯片段，并合并生成 "
                 f"{len(drafts)} 张审核卡，避免长材料产生过多重复审核项。"
+            )
+        if not drafts:
+            # Last-resort full-text card: preserving one reviewable card is
+            # safer than reporting a successful import with zero cards.
+            fallback_segment_id = db.create_segment(
+                material_id,
+                len(segments) + 1,
+                redaction.redacted_text.strip(),
+                locator="材料全文（兜底）",
+                pii_flags=pii_kinds,
+            )
+            fallback_segment = {
+                "id": fallback_segment_id,
+                "redacted_text": redaction.redacted_text.strip(),
+                "locator": "材料全文（兜底）",
+            }
+            drafts = generate_evidence_drafts(
+                material_id,
+                [fallback_segment],
+                source_role,
+                max_cards=1,
+                target_chars=max(_EVIDENCE_CARD_TARGET_CHARS, 720),
+            )
+            warnings.append(
+                "正常分段没有生成审核卡，系统已使用脱敏材料全文生成 1 张兜底卡，"
+                "请重点人工核对其来源和内容边界。"
             )
         for draft in drafts:
             card_id = db.create_evidence_card(
