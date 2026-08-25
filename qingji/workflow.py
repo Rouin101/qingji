@@ -28,7 +28,11 @@ from .claims import evaluate_claim, validate_citation_ids
 from .config import llm_settings
 from .diagnostics import build_retrieval_diagnostic
 from .evidence import generate_evidence_drafts, split_text
-from .llm import LLMError, request_evidence_card_generation
+from .llm import (
+    LLMError,
+    request_claim_evidence_review,
+    request_evidence_card_generation,
+)
 from .models import (
     ClaimEvaluation,
     ConsentStatus,
@@ -412,6 +416,42 @@ _LINK_RATIONALES = {
 }
 
 
+def _semantic_relation_overrides(
+    claim_text: str,
+    evidence_rows: Sequence[Mapping[str, Any]],
+) -> tuple[Mapping[int, str] | None, Mapping[int, str] | None, Any | None, str]:
+    """Ask the configured model for conservative semantic evidence links.
+
+    The model decides only the relation of an already approved, consent-confirmed
+    card to the claim.  Citation eligibility and the final four-level verdict
+    remain local checks.  Returning an error string instead of raising keeps a
+    claim check available when the optional provider is temporarily unavailable.
+    """
+
+    if not llm_settings.configured:
+        return None, None, None, ""
+    try:
+        advice = request_claim_evidence_review(
+            claim_text,
+            evidence_rows,
+            config=llm_settings,
+        )
+    except LLMError as exc:
+        return None, None, None, str(exc)
+
+    overrides = {
+        int(item.evidence_id): item.relation for item in advice.reviews
+    }
+    rationales = {
+        int(item.evidence_id): (
+            "语义判断："
+            + (item.rationale or "该卡片与结论的完整语义未形成直接蕴含或冲突。")
+        )
+        for item in advice.reviews
+    }
+    return overrides, rationales, advice, ""
+
+
 def _task_title(missing_item: str) -> str:
     title = f"补齐：{missing_item}"
     return title if len(title) <= 60 else title[:59] + "…"
@@ -480,11 +520,25 @@ def _store_evaluation(
     evidence_rows = db.list_evidence_cards(project_id)
     material_rows = db.list_materials(project_id)
     candidates = _load_approved_candidates(db, project_id, evidence_rows)
+    semantic_advice = None
+    semantic_error = ""
+    effective_overrides = relation_overrides
+    effective_rationales = relation_rationales
+    # Explicit overrides are retained for audited/manual corrections.  Otherwise
+    # use complete-semantic judgement whenever a model is configured, and fall
+    # back to local lexical rules only if that optional call cannot complete.
+    if relation_overrides is None and candidates:
+        (
+            effective_overrides,
+            effective_rationales,
+            semantic_advice,
+            semantic_error,
+        ) = _semantic_relation_overrides(claim_text, evidence_rows)
     evaluation = evaluate_claim(
         claim_text,
         candidates,
         max_candidates=8,
-        relation_overrides=relation_overrides,
+        relation_overrides=effective_overrides,
     )
     diagnostic = build_retrieval_diagnostic(
         claim_text,
@@ -529,7 +583,7 @@ def _store_evaluation(
             checked_at=_now_iso(),
         )
 
-    _replace_claim_links(db, claim_id, evaluation, relation_rationales)
+    _replace_claim_links(db, claim_id, evaluation, effective_rationales)
     _sync_followup_tasks(
         db, claim_id, evaluation.missing_evidence
     )
@@ -540,6 +594,31 @@ def _store_evaluation(
         input_data={"claim_text": claim_text},
         output_data=diagnostic,
     )
+    if semantic_advice is not None:
+        db.create_agent_run(
+            project_id,
+            "llm_claim_evidence_review",
+            claim_id=int(claim_id),
+            input_data={
+                "claim_text": claim_text,
+                "candidate_count": len(candidates),
+                "mode": "automatic_semantic_entailment",
+            },
+            output_data=semantic_advice.as_dict(),
+        )
+    elif semantic_error:
+        db.create_agent_run(
+            project_id,
+            "llm_claim_evidence_review",
+            claim_id=int(claim_id),
+            status="failed",
+            input_data={
+                "claim_text": claim_text,
+                "candidate_count": len(candidates),
+                "mode": "automatic_semantic_entailment",
+            },
+            error_message=semantic_error[:500],
+        )
     return StoredClaimResult(
         claim_id=int(claim_id),
         evaluation=evaluation,

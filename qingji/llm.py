@@ -322,7 +322,7 @@ def build_claim_evidence_review_prompt(
     max_context_chars: int = 12000,
     max_cards: int = _CLAIM_EVIDENCE_REVIEW_MAX_CARDS,
 ) -> tuple[str, set[int]]:
-    """Build a bounded prompt for model-assisted claim/evidence relations.
+    """Build a bounded prompt for semantic claim/evidence entailment.
 
     Local retrieval only limits the context size; it does not decide the
     relation.  The model must label every card included in the prompt so an
@@ -371,11 +371,14 @@ def build_claim_evidence_review_prompt(
     }
     context = "\n".join(evidence_lines) or "（没有可供复核的已审核、已授权证据）"
     prompt = (
-        "你是青迹的证据关联复核模块，不是事实裁判。请只判断给定的、已经人工批准且"
-        "已确认授权的证据卡，是否直接支持、直接反驳当前结论，或只能作为背景。"
-        "不要因为共享一个关键词就判为支持；要检查对象、行为、范围、时间、场景和"
-        "语气是否真正对应。团队分析不能单独证明受访者事实。四级核验结果仍由本地"
-        "规则系统计算。请对每个给定 evidence_id 各返回一项；无法直接对应时返回 context。"
+        "你是青迹的证据语义蕴含判断模块，不是事实裁判。请只判断给定的、已经人工批准且"
+        "已确认授权的证据卡，是否能凭卡片本身直接支持、直接反驳当前结论，或只能作为背景。"
+        "只有在对象、行为或状态、方向、量词/数量、范围、时间和场景均不矛盾且足以推出结论时，"
+        "才返回 support；只有卡片明确给出相反内容时，才返回 contradict。共享主题、词语或领域"
+        "不构成蕴含：例如结论说“使用数字终端的人很少”，而卡片只介绍数字服务、平台功能或"
+        "线上入口时，必须返回 context。信息不足、表述模糊或需要额外推断时也返回 context。"
+        "团队分析不能单独证明受访者事实。四级核验结果仍由本地规则系统计算。请对每个给定"
+        "evidence_id 各返回一项；无法直接对应时返回 context。"
         "只返回一个 JSON 对象，不要 Markdown 代码围栏。\n\n"
         "JSON 字段必须为：evidence_reviews（数组，每项包含 evidence_id、relation、"
         "rationale；relation 只能是 support、contradict、context）、uncertainties（最多 8 条）。\n\n"

@@ -11,7 +11,12 @@ from types import SimpleNamespace
 
 from qingji.claims import validate_citation_ids
 from qingji.db import Database
-from qingji.llm import EvidenceCardGenerationAdvice, EvidenceCardGenerationItem
+from qingji.llm import (
+    ClaimEvidenceReviewAdvice,
+    ClaimEvidenceReviewItem,
+    EvidenceCardGenerationAdvice,
+    EvidenceCardGenerationItem,
+)
 from qingji.models import (
     ConsentStatus,
     ReviewStatus,
@@ -603,6 +608,44 @@ class WorkflowTestCase(unittest.TestCase):
         links = self.db.list_claim_evidence_links(stored.claim_id)
         self.assertEqual([link["relation"] for link in links], ["context"])
         self.assertIn("模型复核", links[0]["rationale"])
+
+    def test_configured_model_automatically_uses_semantic_relations(self) -> None:
+        imported = self._import(DIFFICULTY_TEXT)
+        card_id = imported.evidence_card_ids[0]
+        advice = ClaimEvidenceReviewAdvice(
+            reviews=(
+                ClaimEvidenceReviewItem(
+                    evidence_id=card_id,
+                    relation="context",
+                    rationale="材料只涉及线上平台，未蕴含目标结论。",
+                ),
+            ),
+            uncertainties=(),
+            model="test-model",
+        )
+        configured = SimpleNamespace(configured=True, model="test-model")
+
+        with (
+            patch("qingji.workflow.llm_settings", configured),
+            patch(
+                "qingji.workflow.request_claim_evidence_review",
+                return_value=advice,
+            ) as request_review,
+        ):
+            stored = check_and_store_claim(
+                self.db, self.project_id, SIMPLE_CLAIM
+            )
+
+        self.assertEqual(stored.evaluation.verdict, Verdict.UNSUPPORTED)
+        request_review.assert_called_once()
+        links = self.db.list_claim_evidence_links(stored.claim_id)
+        self.assertEqual([link["relation"] for link in links], ["context"])
+        self.assertIn("语义判断", links[0]["rationale"])
+        semantic_run = self.db.get_latest_claim_run(
+            stored.claim_id, "llm_claim_evidence_review"
+        )
+        self.assertEqual(semantic_run["status"], "completed")
+        self.assertEqual(semantic_run["output"]["model"], "test-model")
 
     def test_confirmed_import_has_full_text_fallback_card(self) -> None:
         with patch("qingji.workflow.split_text", return_value=[]):

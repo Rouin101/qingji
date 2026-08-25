@@ -531,6 +531,8 @@ class LLMTests(unittest.TestCase):
         self.assertEqual(allowed, {1, 2})
         self.assertNotIn("test@example.com", prompt)
         self.assertNotIn("13812345678", prompt)
+        self.assertIn("量词/数量", prompt)
+        self.assertIn("必须返回 context", prompt)
 
         advice = request_claim_evidence_review(
             "居民使用平台时遇到困难。",
