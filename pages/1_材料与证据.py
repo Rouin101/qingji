@@ -177,27 +177,21 @@ with tab_import:
         uploaded_bytes = locked_upload.get("content") or b""
         if not isinstance(uploaded_bytes, bytes):
             uploaded_bytes = b""
-        if uploaded_name and uploaded_bytes:
-            st.caption(f"已选择文件：{uploaded_name}。如需更换，请先移除当前文件。")
-            if st.button("移除当前文件并重新选择", key="clear_single_material_file"):
-                st.session_state.pop(upload_lock_key, None)
-                st.session_state.pop(uploader_widget_key, None)
-                st.rerun()
-        else:
+        if not uploaded_name or not uploaded_bytes:
             st.session_state.pop(upload_lock_key, None)
-    if not uploaded_name:
-        selected_upload = st.file_uploader(
-            "上传文字文件（可选）",
-            type=["txt", "md", "docx", "pdf"],
-            key=uploader_widget_key,
-            help="文字、Word 和 PDF 文件会先在本地读取，不会自动发送到云端。扫描版 PDF 需要先转为可复制文字。",
-        )
-        if selected_upload is not None:
-            st.session_state[upload_lock_key] = {
-                "name": selected_upload.name,
-                "content": selected_upload.getvalue(),
-            }
-            st.rerun()
+    selected_upload = st.file_uploader(
+        "上传文字文件（可选）",
+        type=["txt", "md", "docx", "pdf"],
+        key=uploader_widget_key,
+        disabled=bool(uploaded_name),
+        help="文字、Word 和 PDF 文件会先在本地读取，不会自动发送到云端。选中一个文件后将锁定，避免误覆盖。",
+    )
+    if not uploaded_name and selected_upload is not None:
+        st.session_state[upload_lock_key] = {
+            "name": selected_upload.name,
+            "content": selected_upload.getvalue(),
+        }
+        st.rerun()
 
     uploaded_text = ""
     uploaded_error = ""
@@ -387,21 +381,35 @@ with tab_import:
                 def update_import_progress(message: str) -> None:
                     import_progress.info(message)
 
-                with st.spinner("正在检查隐私并生成证据卡……"):
-                    result = import_text_material(
-                        db,
-                        project_id,
-                        text,
-                        original_filename=filename.strip(),
-                        source_role=effective_source_role,
-                        context=effective_context,
-                        captured_at=effective_captured_at.isoformat(),
-                        consent_status=ConsentStatus(consent_choice),
-                        custom_sensitive_terms=custom_terms,
-                        is_fictional=is_fictional,
-                        progress_callback=update_import_progress,
-                    )
-                import_progress.empty()
+                import_kwargs = {
+                    "original_filename": filename.strip(),
+                    "source_role": effective_source_role,
+                    "context": effective_context,
+                    "captured_at": effective_captured_at.isoformat(),
+                    "consent_status": ConsentStatus(consent_choice),
+                    "custom_sensitive_terms": custom_terms,
+                    "is_fictional": is_fictional,
+                }
+                try:
+                    with st.spinner("正在检查隐私并生成证据卡……"):
+                        try:
+                            result = import_text_material(
+                                db,
+                                project_id,
+                                text,
+                                progress_callback=update_import_progress,
+                                **import_kwargs,
+                            )
+                        except TypeError as exc:
+                            # Streamlit may reload this page before a
+                            # previously imported workflow module is reloaded.
+                            if "progress_callback" not in str(exc):
+                                raise
+                            result = import_text_material(
+                                db, project_id, text, **import_kwargs
+                            )
+                finally:
+                    import_progress.empty()
             except Exception as exc:
                 st.error(f"材料导入失败：{exc}")
             else:

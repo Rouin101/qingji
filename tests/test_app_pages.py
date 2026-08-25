@@ -198,7 +198,7 @@ class AppPageSmokeTest(unittest.TestCase):
         )
         self.assertTrue(any("已处理 2 个文件" in item.value for item in app.success))
 
-    def test_single_file_upload_is_locked_until_removed(self) -> None:
+    def test_single_file_upload_is_locked_after_selection(self) -> None:
         database = get_database()
         project_id = database.create_project("单文件上传锁定页面检查")
 
@@ -214,16 +214,11 @@ class AppPageSmokeTest(unittest.TestCase):
         app.run()
 
         self.assertEqual(app.exception, [])
+        uploader = app.file_uploader(key="single_material_file")
+        self.assertTrue(uploader.disabled)
+        self.assertIsNotNone(uploader.value)
         self.assertFalse(
-            any(
-                uploader.key == "single_material_file"
-                for uploader in app.file_uploader
-            )
-        )
-        self.assertTrue(any("已选择文件：锁定上传.txt" in item.value for item in app.caption))
-        self.assertEqual(
-            app.button(key="clear_single_material_file").label,
-            "移除当前文件并重新选择",
+            any(item.key == "clear_single_material_file" for item in app.button)
         )
 
     def test_followup_task_can_be_completed_and_reopened(self) -> None:
