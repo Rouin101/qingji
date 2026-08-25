@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import asdict, is_dataclass
 from datetime import date, datetime
+from html import escape
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -136,6 +137,24 @@ def configure_page(title: str, icon: str = "🌱") -> None:
         [data-testid="stSidebar"] {
             background: linear-gradient(180deg, #f7f4fc 0, #f1ebfa 100%);
             border-right: 1px solid var(--qj-line);
+        }
+        .qj-sidebar-project {
+            background: linear-gradient(135deg, var(--qj-primary) 0%, var(--qj-primary-strong) 100%);
+            border: 1px solid rgba(255,255,255,.18);
+            border-radius: .8rem;
+            box-shadow: 0 8px 20px rgba(85, 42, 130, .20);
+            color: #ffffff;
+            line-height: 1.5;
+            margin: .75rem 0 .55rem;
+            padding: .9rem 1rem;
+        }
+        .qj-sidebar-project strong {
+            color: #ffffff;
+            font-size: 1.05rem;
+        }
+        .qj-sidebar-project p {
+            color: rgba(255,255,255,.88);
+            margin: .55rem 0 0;
         }
         h1, h2, h3 { color: var(--qj-ink); letter-spacing: -.02em; }
         h1 { padding-bottom: .15rem; }
@@ -348,9 +367,13 @@ def render_sidebar_note(
             action = get_next_action(progress)
             st.page_link(action["page"], label=action["button"], icon="➡️")
         if not (is_demo_project(project) or project is None):
-            st.info(
-                f"当前项目：{project.get('name', '未命名项目')}\n\n"
-                "项目切换与新建请返回“项目概览”。"
+            project_name = escape(str(project.get("name", "未命名项目")))
+            st.markdown(
+                '<div class="qj-sidebar-project">'
+                f"<strong>当前项目：{project_name}</strong>"
+                "<p>项目切换与新建请返回“项目概览”。</p>"
+                "</div>",
+                unsafe_allow_html=True,
             )
         st.caption("v1.2 · 开发版")
 
