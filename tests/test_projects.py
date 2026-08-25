@@ -117,7 +117,7 @@ class ProjectWorkspaceTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "内置项目"):
                 operation()
 
-    def test_permanent_delete_requires_archive_and_exact_name(self) -> None:
+    def test_permanent_delete_requires_archive(self) -> None:
         project_id = create_project_workspace(self.db, "待删除项目")
         material_id = self.db.create_material(project_id, "text")
         raw_dir = Path(self.temp_dir.name) / "raw"
@@ -131,12 +131,10 @@ class ProjectWorkspaceTests(unittest.TestCase):
         self.db.update_material(material_id, raw_path=str(raw_path))
 
         with self.assertRaisesRegex(ValueError, "先归档"):
-            delete_project_workspace(self.db, project_id, "待删除项目")
+            delete_project_workspace(self.db, project_id)
         archive_project_workspace(self.db, project_id)
-        with self.assertRaisesRegex(ValueError, "输入不一致"):
-            delete_project_workspace(self.db, project_id, "名称错误")
 
-        result = delete_project_workspace(self.db, project_id, "待删除项目")
+        result = delete_project_workspace(self.db, project_id)
         self.assertEqual(result.removed_files, 2)
         self.assertEqual(result.warnings, ())
         self.assertIsNone(self.db.get_project(project_id))

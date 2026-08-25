@@ -135,9 +135,8 @@ def restore_project_workspace(db: Any, project_id: int) -> dict[str, Any]:
 def delete_project_workspace(
     db: Any,
     project_id: int,
-    confirmation_name: str,
 ) -> ProjectDeletionResult:
-    """Permanently delete an archived project after exact-name confirmation.
+    """Permanently delete an archived project.
 
     Database rows are removed with SQLite cascades. Material files are only
     unlinked when their resolved path matches Qingji's own per-material naming
@@ -147,8 +146,6 @@ def delete_project_workspace(
     project = _require_user_project(db, project_id)
     if not project.get("archived_at"):
         raise ValueError("请先归档项目，再执行永久删除。")
-    if (confirmation_name or "").strip() != project["name"]:
-        raise ValueError("项目名称输入不一致，未执行删除。")
 
     materials = db.list_materials(int(project_id))
     db_dir = Path(db.path).resolve().parent

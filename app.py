@@ -248,7 +248,7 @@ if not is_demo_project(project):
 archived_projects = db.list_archived_projects()
 if archived_projects:
     with st.expander(f"已归档项目（{len(archived_projects)}）"):
-        st.caption("恢复后可继续编辑；永久删除要求输入完整项目名称，且不可撤销。")
+        st.caption("恢复后可继续编辑；永久删除不可撤销。")
         for archived_project in archived_projects:
             archived_id = int(archived_project["id"])
             st.markdown(f"#### {archived_project['name']}")
@@ -278,10 +278,6 @@ if archived_projects:
                 ):
                     st.caption("此操作不可撤销，请完成确认后继续。")
                     with st.form(f"delete_project_form_{archived_id}"):
-                        delete_confirmation = st.text_input(
-                            "输入完整项目名称",
-                            key=f"delete_name_{archived_id}",
-                        )
                         delete_acknowledged = st.checkbox(
                             "我理解数据库记录和本地材料文件将被永久删除",
                             key=f"delete_ack_{archived_id}",
@@ -295,9 +291,7 @@ if archived_projects:
                             st.error("请先确认理解永久删除的影响。")
                         else:
                             try:
-                                deletion = delete_project_workspace(
-                                    db, archived_id, delete_confirmation
-                                )
+                                deletion = delete_project_workspace(db, archived_id)
                             except ValueError as exc:
                                 st.error(str(exc))
                             except Exception as exc:
