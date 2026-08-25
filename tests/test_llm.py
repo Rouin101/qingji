@@ -77,6 +77,7 @@ class LLMTests(unittest.TestCase):
                     "title": "受访者联系 test@example.com",
                     "quote": "一名受访者遇到困难，手机号 13812345678。",
                     "summary": "需要人工帮助",
+                    "source_role": "受访者",
                     "review_status": "approved",
                     "consent_status": "confirmed",
                 },
@@ -99,20 +100,24 @@ class LLMTests(unittest.TestCase):
         self.assertNotIn("13812345678", str(captured["payload"]))
         self.assertNotIn('"evidence_id":2', str(captured["payload"]))
 
-    def test_claim_candidate_prompt_rejects_unapproved_cards(self) -> None:
+    def test_claim_candidate_prompt_keeps_only_subjective_judgment_sources(self) -> None:
         prompt, allowed = build_claim_candidate_prompt(
             [
                 {
                     "id": 1,
-                    "quote": "已批准材料。",
+                    "quote": "受访者认为线上办理需要人工帮助。",
+                    "source_role": "受访者",
+                    "evidence_type": "interview_statement",
                     "review_status": "approved",
                     "consent_status": "confirmed",
                 },
                 {
                     "id": 2,
-                    "quote": "未授权材料。",
+                    "quote": "新闻报道介绍了线上服务平台的功能。",
+                    "source_role": "正式记录",
+                    "evidence_type": "formal_record",
                     "review_status": "approved",
-                    "consent_status": "unknown",
+                    "consent_status": "confirmed",
                 },
             ]
         )

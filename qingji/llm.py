@@ -238,6 +238,24 @@ _MAX_FIELD_CHARS = 1200
 _MAX_LIST_ITEMS = 8
 _CLAIM_EVIDENCE_REVIEW_MAX_CARDS = 24
 _SEMANTIC_CARD_MAX_CARDS = 24
+_CLAIM_CANDIDATE_EVIDENCE_TYPES = {
+    EvidenceType.INTERVIEW_STATEMENT.value,
+    EvidenceType.STAFF_EXPLANATION.value,
+    EvidenceType.FIELD_OBSERVATION.value,
+    EvidenceType.TEAM_ANALYSIS.value,
+}
+_CLAIM_CANDIDATE_SOURCE_TERMS = (
+    "受访",
+    "访谈",
+    "群众",
+    "居民",
+    "用户",
+    "当事人",
+    "工作人员",
+    "观察",
+    "调研",
+    "团队分析",
+)
 
 
 def _status(value: Any) -> str:
@@ -273,9 +291,31 @@ def _eligible_evidence(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]
                 "summary": _clean_text(row.get("summary")),
                 "evidence_type": _clean_text(row.get("evidence_type"), limit=100),
                 "source_locator": _clean_text(row.get("source_locator"), limit=200),
+                "source_role": _clean_text(row.get("source_role"), limit=100),
             }
         )
     return eligible
+
+
+def _subjective_claim_candidate_evidence(
+    rows: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Keep only evidence that can carry a participant or field judgment.
+
+    Official notices, news reports, policy descriptions and factual case
+    summaries are evidence, but they are not the research conclusions users
+    want to screen here.  They remain available during actual claim checking.
+    """
+
+    result: list[dict[str, Any]] = []
+    for item in _eligible_evidence(rows):
+        evidence_type = str(item.get("evidence_type") or "")
+        source_role = str(item.get("source_role") or "")
+        if evidence_type in _CLAIM_CANDIDATE_EVIDENCE_TYPES or any(
+            term in source_role for term in _CLAIM_CANDIDATE_SOURCE_TERMS
+        ):
+            result.append(item)
+    return result
 
 
 def _safe_evaluation_data(data: Mapping[str, Any]) -> dict[str, Any]:
@@ -443,7 +483,7 @@ def build_claim_candidate_prompt(
 
     if isinstance(max_candidates, bool) or not isinstance(max_candidates, int) or max_candidates <= 0:
         raise ValueError("max_candidates must be a positive integer")
-    eligible = _eligible_evidence(evidence_rows)
+    eligible = _subjective_claim_candidate_evidence(evidence_rows)
     evidence_lines: list[str] = []
     used_chars = 0
     context_limit = max(800, max_context_chars - 1600)
@@ -458,12 +498,14 @@ def build_claim_candidate_prompt(
     }
     context = "\n".join(evidence_lines) or "（没有可供提取的已审核、已授权证据）"
     prompt = (
-        "你是青迹的结论候选提取助手，不是事实裁判。请从给定的、已经人工批准且"
-        "已确认授权的脱敏证据中，提取适合作为后续核验对象的明确事实性陈述。"
+        "你是青迹的调研结论候选提取助手，不是事实裁判。请从给定的、已经人工批准且"
+        "已确认授权的脱敏证据中，提取受访者、工作人员、观察者或调研团队已经表达的"
+        "主观评价、感受、判断、比较或观察结论。"
         "候选只供用户选择后再由系统核验，不是最终结论。不得补造人物、数量、时间、"
-        "地点、因果或范围；不得把团队分析、建议、来源边界说明当成事实。"
-        "一条候选只表达一个清晰判断，避免“普遍”“全部”“显著”等无法由材料直接"
-        "说明的泛化；若没有适合的陈述，返回空数组。只返回一个 JSON 对象，"
+        "地点、因果或范围；必须排除新闻报道、官方公告、政策说明、部门决算、案例介绍、"
+        "平台功能描述、数据罗列和纯客观事实，即使它们表述正确也不能作为候选结论。"
+        "一条候选只表达一个清晰的主观判断，避免“普遍”“全部”“显著”等无法由材料直接"
+        "说明的泛化；若原文没有主观判断，返回空数组。只返回一个 JSON 对象，"
         "不要 Markdown 代码围栏。\n\n"
         "JSON 字段必须为：candidates（数组，每项包含 claim_text、evidence_ids；"
         f"最多 {max_candidates} 项；evidence_ids 至少一个且只能使用给定 evidence_id 的整数）、"
@@ -803,9 +845,9 @@ def request_claim_candidates(
     if isinstance(max_candidates, bool) or not isinstance(max_candidates, int) or max_candidates <= 0:
         raise ValueError("max_candidates must be a positive integer")
 
-    eligible = _eligible_evidence(evidence_rows)
+    eligible = _subjective_claim_candidate_evidence(evidence_rows)
     if not eligible:
-        raise LLMResponseError("当前没有可供提取的已审核、已授权证据。")
+        raise LLMResponseError("当前没有可供提取调研结论的已批准主观判断材料。")
     bounded_rows = [
         {
             **item,
