@@ -647,6 +647,52 @@ class LLMTests(unittest.TestCase):
             ["approved", "rejected"],
         )
 
+    def test_batch_evidence_review_retries_a_prose_response_once(self) -> None:
+        calls = 0
+
+        def fake_post(url, headers, payload, timeout):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return {
+                    "choices": [
+                        {"message": {"content": "这张卡片来源清晰，可以批准。"}}
+                    ]
+                }
+            self.assertIn("格式重试", payload["messages"][-1]["content"])
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                '{"reviews":[{"evidence_id":7,'
+                                '"review_status":"approved",'
+                                '"review_reason":"来源清晰",'
+                                '"uncertainties":[]}]}'
+                            )
+                        }
+                    }
+                ]
+            }
+
+        advice = request_evidence_review_batch(
+            [
+                {
+                    "id": 7,
+                    "consent_status": "confirmed",
+                    "review_status": "draft",
+                    "title": "平台体验",
+                    "summary": "需要帮助",
+                    "quote": "操作时需要帮助。",
+                }
+            ],
+            config=_config(),
+            post_json=fake_post,
+        )
+
+        self.assertEqual(calls, 2)
+        self.assertEqual(advice.reviews[0][1].review_status, "approved")
+
     def test_batch_evidence_review_accepts_single_uncertainty_string(self) -> None:
         def fake_post(url, headers, payload, timeout):
             return {

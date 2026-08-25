@@ -1254,16 +1254,45 @@ def request_evidence_review_batch(
         evidence_rows,
         max_context_chars=current.max_context_chars,
     )
+    post = post_json or _default_post_json
     response = _call_chat_completion(
         prompt,
         config=current,
-        post_json=post_json or _default_post_json,
+        post_json=post,
     )
-    return _parse_evidence_review_batch(
-        response,
-        allowed_ids=allowed_ids,
-        model=current.model,
-    )
+    try:
+        return _parse_evidence_review_batch(
+            response,
+            allowed_ids=allowed_ids,
+            model=current.model,
+        )
+    except LLMResponseError as first_error:
+        # A few OpenAI-compatible gateways ignore response_format on the first
+        # turn. Retry once with an explicit recovery instruction rather than
+        # treating a transient prose answer as a final review failure.
+        retry_prompt = (
+            prompt
+            + "\n\n这是格式重试：上一条回复无法被程序读取。"
+            "现在只能返回一个 JSON 对象，不要解释、不要 Markdown、不要代码围栏。"
+            "对象必须包含 reviews 数组，并为每个给定 evidence_id 返回 approved 或 rejected。"
+        )
+        retry_response = _call_chat_completion(
+            retry_prompt,
+            config=current,
+            post_json=post,
+        )
+        try:
+            return _parse_evidence_review_batch(
+                retry_response,
+                allowed_ids=allowed_ids,
+                model=current.model,
+            )
+        except LLMResponseError as retry_error:
+            raise LLMResponseError(
+                "模型连续两次未返回可用的审核 JSON。"
+                "请检查当前模型是否支持 JSON 输出；"
+                f"第二次错误：{retry_error}"
+            ) from first_error
 
 
 def request_evidence_review(
