@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 _TEST_DATA_DIR = tempfile.mkdtemp(prefix="qingji_apptest_")
 os.environ["QINGJI_DATA_DIR"] = _TEST_DATA_DIR
@@ -250,6 +251,51 @@ class AppPageSmokeTest(unittest.TestCase):
         self.assertEqual(
             app.text_input(key="material_filename").value,
             "手工录入_项目记录.txt",
+        )
+
+    def test_bulk_regeneration_button_replaces_per_card_buttons(self) -> None:
+        database = get_database()
+        project_id = database.create_project("批量拒绝卡重新生成页面检查")
+        imported = import_text_material(
+            database,
+            project_id,
+            "正式记录显示现场安排了人工协助窗口。",
+            original_filename="拒绝卡重新生成测试.txt",
+            source_role="正式记录",
+            context="批量拒绝卡重新生成页面检查场景",
+            captured_at="2026-08-25",
+            consent_status="confirmed",
+            custom_sensitive_terms=None,
+            is_fictional=False,
+        )
+        database.set_evidence_review_status(
+            int(imported.evidence_card_ids[0]), "rejected"
+        )
+        configured = qingji_config.LLMSettings(
+            enabled=True,
+            base_url="https://example.test/v1",
+            api_key="test-key",
+            model="test-model",
+            timeout_seconds=30,
+            max_context_chars=12000,
+        )
+
+        with patch.object(qingji_config, "llm_settings", configured):
+            app = AppTest.from_file("app.py", default_timeout=30)
+            app.run()
+            app.session_state["qingji_project_id"] = project_id
+            app.switch_page("pages/1_材料与证据.py")
+            app.run()
+
+        self.assertEqual(app.exception, [])
+        self.assertTrue(
+            any(
+                item.label == "一键根据拒绝理由重新生成全部被拒绝卡片"
+                for item in app.button
+            )
+        )
+        self.assertFalse(
+            any(item.label == "根据拒绝理由重新生成待审核卡" for item in app.button)
         )
 
     def test_followup_task_can_be_completed_and_reopened(self) -> None:

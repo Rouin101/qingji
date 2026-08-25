@@ -940,6 +940,30 @@ def regenerate_rejected_evidence_card(
     )
 
 
+def list_regenerable_rejected_evidence_cards(
+    db: Any, project_id: int
+) -> tuple[dict[str, Any], ...]:
+    """Return rejected, authorized cards that do not yet have a replacement."""
+
+    rejected_cards = db.list_evidence_cards(
+        int(project_id), review_status=ReviewStatus.REJECTED.value
+    )
+    review_events = db.list_evidence_review_events(int(project_id), limit=500)
+    regenerated_source_ids = {
+        int(event["evidence_card_id"])
+        for event in review_events
+        if str(event.get("change_reason") or "").startswith(
+            "已根据拒绝理由生成替代卡"
+        )
+    }
+    return tuple(
+        card
+        for card in rejected_cards
+        if _status_value(card.get("consent_status")) == ConsentStatus.CONFIRMED.value
+        and int(card["id"]) not in regenerated_source_ids
+    )
+
+
 def review_evidence_cards(
     db: Any,
     updates: Sequence[Mapping[str, Any]],

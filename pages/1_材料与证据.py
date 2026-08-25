@@ -30,6 +30,7 @@ from qingji.ui import (
 )
 from qingji.workflow import (
     import_text_material,
+    list_regenerable_rejected_evidence_cards,
     regenerate_rejected_evidence_card,
     review_evidence_card,
     review_evidence_cards,
@@ -643,6 +644,9 @@ with tab_review:
         and card.get("consent_status") != "confirmed"
         for card in all_cards
     )
+    regenerable_rejected_cards = list_regenerable_rejected_evidence_cards(
+        db, project_id
+    )
     with st.expander("批量审核工具", expanded=False):
         st.caption(
             f"当前有 {len(authorized_draft_cards)} 张已确认授权的待审核卡片。"
@@ -828,6 +832,67 @@ with tab_review:
                         "message": completion_message,
                     }
                 st.rerun()
+
+            regeneration_notice_key = f"llm_regeneration_notice_{project_id}"
+            regeneration_notice = st.session_state.pop(regeneration_notice_key, None)
+            if regenerable_rejected_cards or regeneration_notice:
+                st.divider()
+                if regeneration_notice:
+                    notice_level = regeneration_notice.get("level", "info")
+                    notice_message = regeneration_notice.get("message", "")
+                    getattr(st, notice_level, st.info)(notice_message)
+                if regenerable_rejected_cards:
+                    st.caption(
+                        f"当前有 {len(regenerable_rejected_cards)} 张已拒绝卡片可根据各自的"
+                        "拒绝理由重新生成。新卡仍需人工或模型重新审核。"
+                    )
+                    regenerate_all = st.button(
+                        "一键根据拒绝理由重新生成全部被拒绝卡片",
+                        key=f"regenerate_all_rejected_evidence_{project_id}",
+                    )
+                    if regenerate_all:
+                        created_ids: list[int] = []
+                        regeneration_failures: list[str] = []
+                        with st.spinner(
+                            f"正在根据拒绝理由重新生成 {len(regenerable_rejected_cards)} 张证据卡……"
+                        ):
+                            for card in regenerable_rejected_cards:
+                                card_id = int(card["id"])
+                                try:
+                                    regenerated = regenerate_rejected_evidence_card(
+                                        db, card_id
+                                    )
+                                    created_ids.append(
+                                        regenerated.replacement_evidence_card_id
+                                    )
+                                    db.create_agent_run(
+                                        project_id,
+                                        "llm_evidence_card_regeneration",
+                                        input_data={
+                                            "source_evidence_id": card_id,
+                                            "rejection_reason": regenerated.rejection_reason,
+                                            "model": llm_settings.model,
+                                        },
+                                        output_data={
+                                            "replacement_evidence_id": regenerated.replacement_evidence_card_id
+                                        },
+                                    )
+                                except Exception as exc:
+                                    regeneration_failures.append(f"E{card_id}：{exc}")
+                        completion_message = (
+                            f"已生成 {len(created_ids)} 张待审核替代卡。"
+                            "请审核新卡后再决定是否引用。"
+                        )
+                        st.session_state[regeneration_notice_key] = {
+                            "level": "success" if not regeneration_failures else "warning",
+                            "message": completion_message
+                            + (
+                                " 未完成：" + "；".join(regeneration_failures)
+                                if regeneration_failures
+                                else ""
+                            ),
+                        }
+                        st.rerun()
         else:
             st.info(
                 "尚未配置可用的大模型。配置 DeepSeek 后，这里会出现批量模型审核入口。"
@@ -894,45 +959,6 @@ with tab_review:
                     or "未记录具体拒绝理由，请人工复核。"
                 )
                 st.error(f"拒绝理由：{rejection_reason}")
-                already_regenerated = any(
-                    str(event.get("change_reason") or "").startswith(
-                        "已根据拒绝理由生成替代卡"
-                    )
-                    for event in review_events
-                )
-                if llm_settings.configured and card.get("consent_status") == "confirmed":
-                    if already_regenerated:
-                        st.caption("已根据该拒绝理由生成替代卡，请审核新卡后再决定是否引用。")
-                    elif st.button(
-                        "根据拒绝理由重新生成待审核卡",
-                        key=f"regenerate_rejected_evidence_{project_id}_{card_id}",
-                    ):
-                        try:
-                            with st.spinner("正在根据拒绝理由重新生成证据卡……"):
-                                regenerated = regenerate_rejected_evidence_card(
-                                    db, card_id
-                                )
-                            db.create_agent_run(
-                                project_id,
-                                "llm_evidence_card_regeneration",
-                                input_data={
-                                    "source_evidence_id": card_id,
-                                    "rejection_reason": regenerated.rejection_reason,
-                                    "model": llm_settings.model,
-                                },
-                                output_data={
-                                    "replacement_evidence_id": regenerated.replacement_evidence_card_id
-                                },
-                            )
-                            st.success(
-                                f"已生成替代卡 E{regenerated.replacement_evidence_card_id}，"
-                                "它仍需重新审核。"
-                            )
-                            st.rerun()
-                        except LLMError as exc:
-                            st.error(f"重新生成失败：{exc}")
-                        except Exception as exc:
-                            st.error(f"无法重新生成替代卡：{exc}")
 
             evidence_advice_key = f"llm_evidence_advice_{project_id}_{card_id}"
             advice_data = st.session_state.get(evidence_advice_key)

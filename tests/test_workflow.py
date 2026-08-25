@@ -28,6 +28,7 @@ from qingji.workflow import (
     StoredClaimResult,
     check_and_store_claim,
     import_text_material,
+    list_regenerable_rejected_evidence_cards,
     regenerate_rejected_evidence_card,
     recheck_claim,
     review_evidence_card,
@@ -514,6 +515,10 @@ class WorkflowTestCase(unittest.TestCase):
             uncertainties=(),
             model="test-model",
         )
+        self.assertEqual(
+            [item["id"] for item in list_regenerable_rejected_evidence_cards(self.db, self.project_id)],
+            [card["id"]],
+        )
         with patch("qingji.workflow.request_evidence_assistance", return_value=advice) as generate:
             regenerated = regenerate_rejected_evidence_card(self.db, int(card["id"]))
 
@@ -521,6 +526,9 @@ class WorkflowTestCase(unittest.TestCase):
         self.assertEqual(replacement["review_status"], "draft")
         self.assertIn(f"E{card['id']} 的拒绝理由重新生成", replacement["source_locator"])
         self.assertEqual(generate.call_args.kwargs["review_feedback"], "原卡把个人经历概括得过宽。")
+        self.assertEqual(
+            list_regenerable_rejected_evidence_cards(self.db, self.project_id), ()
+        )
         with self.assertRaises(ValueError):
             regenerate_rejected_evidence_card(self.db, int(card["id"]))
 
