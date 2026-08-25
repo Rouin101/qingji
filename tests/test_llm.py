@@ -681,6 +681,41 @@ class LLMTests(unittest.TestCase):
 
         self.assertEqual(advice.reviews[0][1].uncertainties, ("仅代表该材料",))
 
+    def test_batch_evidence_review_ignores_invalid_uncertainty_shape(self) -> None:
+        def fake_post(url, headers, payload, timeout):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                '{"reviews":[{"evidence_id":7,'
+                                '"review_status":"approved",'
+                                '"review_reason":"来源清晰",'
+                                '"uncertainties":{"note":"格式不规范"}}]}'
+                            )
+                        }
+                    }
+                ]
+            }
+
+        advice = request_evidence_review_batch(
+            [
+                {
+                    "id": 7,
+                    "consent_status": "confirmed",
+                    "review_status": "draft",
+                    "title": "平台体验",
+                    "summary": "需要帮助",
+                    "quote": "操作时需要帮助。",
+                }
+            ],
+            config=_config(),
+            post_json=fake_post,
+        )
+
+        self.assertEqual(advice.reviews[0][1].review_status, "approved")
+        self.assertEqual(advice.reviews[0][1].uncertainties, ())
+
     def test_probe_uses_no_project_material_and_returns_provider_model(self) -> None:
         captured: dict[str, object] = {}
 

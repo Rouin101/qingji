@@ -489,7 +489,11 @@ def _string_list(value: Any, *, field: str) -> tuple[str, ...]:
         text = _clean_text(value, limit=300)
         return (text,) if text else ()
     if not isinstance(value, list):
-        raise LLMResponseError(f"模型字段 {field} 必须是数组。")
+        # ``uncertainties`` and follow-up hints are optional explanatory
+        # fields.  A provider occasionally returns an object or scalar here;
+        # ignore that malformed optional value instead of discarding valid
+        # approval/rejection decisions for an entire batch.
+        return ()
     result: list[str] = []
     for item in value[:_MAX_LIST_ITEMS]:
         text = _clean_text(item, limit=300)
