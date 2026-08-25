@@ -10,6 +10,7 @@ from qingji.llm import (
     LLMConfigurationError,
     LLMError,
     request_claim_assistance,
+    request_claim_candidates,
 )
 from qingji.ui import (
     TASK_STATUS_LABELS,
@@ -25,7 +26,11 @@ from qingji.ui import (
     render_sidebar_note,
     verdict_box,
 )
-from qingji.workflow import check_and_store_claim, recheck_claim
+from qingji.workflow import (
+    check_and_store_claim,
+    recheck_claim,
+    recheck_project_claims,
+)
 
 
 EXAMPLE_CLAIM = "当地居民普遍认为线上办事平台使用困难。"
@@ -135,7 +140,131 @@ if submitted:
             st.session_state[history_selection_key] = int(stored.claim_id)
             st.success("核验完成。请重点查看理由、证据范围和稳妥改写。")
 
+
+st.markdown("### 从材料提取待核验结论")
+candidate_state_key = f"claim_candidate_advice_{project_id}"
+candidate_submit_key = f"claim_candidate_selection_{project_id}"
+candidate_data = st.session_state.get(candidate_state_key)
+candidate_submitted = False
+if not llm_settings.configured:
+    st.info("配置大模型后，可从已批准、已确认授权的脱敏材料中提取待选结论。")
+else:
+    st.caption(
+        "模型只读取已批准、已确认授权的脱敏证据卡，提取可由原文直接复核的候选；"
+        "候选不会自动保存或改变核验结果。"
+    )
+    if st.button(
+        "从材料中提取待核验结论",
+        key=f"extract_claim_candidates_{project_id}",
+    ):
+        eligible_cards = db.list_evidence_cards(
+            project_id, review_status="approved"
+        )
+        try:
+            with st.spinner("正在从已批准材料中提取待核验结论……"):
+                candidate_advice = request_claim_candidates(
+                    eligible_cards, config=llm_settings
+                )
+        except LLMConfigurationError as exc:
+            st.warning(str(exc))
+        except LLMError as exc:
+            st.error(f"提取结论候选失败：{exc}")
+            db.create_agent_run(
+                project_id,
+                "llm_claim_candidate_generation",
+                status="failed",
+                input_data={
+                    "eligible_evidence_count": len(eligible_cards),
+                    "model": llm_settings.model,
+                },
+                error_message=str(exc)[:500],
+            )
+        except Exception as exc:
+            st.error(f"提取结论候选失败：{exc}")
+        else:
+            candidate_data = candidate_advice.as_dict()
+            st.session_state[candidate_state_key] = candidate_data
+            db.create_agent_run(
+                project_id,
+                "llm_claim_candidate_generation",
+                input_data={
+                    "eligible_evidence_count": len(eligible_cards),
+                    "model": llm_settings.model,
+                },
+                output_data=candidate_data,
+            )
+            if candidate_data.get("candidates"):
+                st.success("已提取候选结论。请勾选需要核验的表述。")
+            else:
+                st.info("当前材料中没有提取出适合单独核验的明确表述。")
+
+if candidate_data and candidate_data.get("candidates"):
+    st.caption(
+        f"候选由 {candidate_data.get('model') or '未标注'} 提取；"
+        "来源编号仅用于追溯，实际核验仍会重新检索全部合格证据。"
+    )
+    with st.form(candidate_submit_key, clear_on_submit=False):
+        selected_candidates: list[str] = []
+        for index, candidate in enumerate(candidate_data["candidates"], start=1):
+            claim_candidate = str(candidate.get("claim_text") or "").strip()
+            evidence_ids = candidate.get("evidence_ids") or []
+            if not claim_candidate:
+                continue
+            checked = st.checkbox(
+                claim_candidate,
+                key=f"claim_candidate_{project_id}_{index}",
+            )
+            st.caption(
+                "来源证据："
+                + ("、".join(f"E{item}" for item in evidence_ids) if evidence_ids else "—")
+            )
+            if checked:
+                selected_candidates.append(claim_candidate)
+        candidate_submitted = st.form_submit_button(
+            "核验已选结论",
+            type="primary",
+        )
+    if candidate_submitted:
+        if not selected_candidates:
+            st.warning("请至少勾选一条候选结论。")
+        else:
+            try:
+                with st.spinner("正在逐条核验所选结论并判断完整语义关系……"):
+                    checked_results = [
+                        check_and_store_claim(db, project_id, item)
+                        for item in selected_candidates
+                    ]
+            except Exception as exc:
+                st.error(f"批量核验候选结论失败：{exc}")
+            else:
+                active_claim_id = int(checked_results[-1].claim_id)
+                st.session_state["active_claim_id"] = active_claim_id
+                st.session_state[history_selection_key] = active_claim_id
+                st.session_state[history_verdict_key] = "all"
+                st.session_state[history_query_key] = ""
+                st.success(f"已核验 {len(checked_results)} 条所选结论。")
+
+    candidate_uncertainties = candidate_data.get("uncertainties") or []
+    if candidate_uncertainties:
+        st.warning("模型标记的不确定性：" + "；".join(candidate_uncertainties))
+
 claims = db.list_claims(project_id)
+if claims:
+    if st.button(
+        f"一键重新核验全部结论（{len(claims)} 条）",
+        key=f"recheck_all_claims_{project_id}",
+        width="stretch",
+    ):
+        try:
+            with st.spinner("正在使用最新证据重新核验全部结论……"):
+                refreshed_claims = recheck_project_claims(db, project_id)
+        except Exception as exc:
+            st.error(f"批量重新核验失败：{exc}")
+        else:
+            claims = db.list_claims(project_id)
+            if refreshed_claims:
+                st.session_state["active_claim_id"] = int(refreshed_claims[-1].claim_id)
+            st.success(f"已完成 {len(refreshed_claims)} 条结论的重新核验。")
 active_claim_id = st.session_state.get("active_claim_id")
 project_claim_ids = {int(item["id"]) for item in claims}
 try:
@@ -194,6 +323,7 @@ if claims:
         if (
             st.session_state.get(history_selection_key) not in history_ids
             or submitted
+            or candidate_submitted
         ):
             st.session_state[history_selection_key] = preferred_claim_id
         selected_claim_id = st.selectbox(

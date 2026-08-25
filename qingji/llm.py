@@ -203,6 +203,36 @@ class ClaimEvidenceReviewAdvice:
         }
 
 
+@dataclass(frozen=True)
+class ClaimCandidateItem:
+    """One model-suggested claim that remains traceable to approved evidence."""
+
+    claim_text: str
+    evidence_ids: tuple[int, ...]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "claim_text": self.claim_text,
+            "evidence_ids": list(self.evidence_ids),
+        }
+
+
+@dataclass(frozen=True)
+class ClaimCandidateAdvice:
+    """Bounded, non-authoritative claim candidates extracted from evidence."""
+
+    candidates: tuple[ClaimCandidateItem, ...]
+    uncertainties: tuple[str, ...]
+    model: str
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "candidates": [item.as_dict() for item in self.candidates],
+            "uncertainties": list(self.uncertainties),
+            "model": self.model,
+        }
+
+
 _MAX_CLAIM_CHARS = 500
 _MAX_FIELD_CHARS = 1200
 _MAX_LIST_ITEMS = 8
@@ -398,6 +428,47 @@ def build_claim_evidence_review_prompt(
         "说明”而不是保留原断言。\n\n"
         f"待核验结论：{claim}\n"
         "候选证据（每行一个 JSON 对象）：\n"
+        f"{context}"
+    )
+    return prompt, allowed_ids
+
+
+def build_claim_candidate_prompt(
+    evidence_rows: Sequence[Mapping[str, Any]],
+    *,
+    max_candidates: int = 12,
+    max_context_chars: int = 12000,
+) -> tuple[str, set[int]]:
+    """Build a redacted prompt for model-suggested, selectable claims."""
+
+    if isinstance(max_candidates, bool) or not isinstance(max_candidates, int) or max_candidates <= 0:
+        raise ValueError("max_candidates must be a positive integer")
+    eligible = _eligible_evidence(evidence_rows)
+    evidence_lines: list[str] = []
+    used_chars = 0
+    context_limit = max(800, max_context_chars - 1600)
+    for item in eligible:
+        line = json.dumps(item, ensure_ascii=False, separators=(",", ":"))
+        if evidence_lines and used_chars + len(line) + 1 > context_limit:
+            break
+        evidence_lines.append(line)
+        used_chars += len(line) + 1
+    allowed_ids = {
+        int(json.loads(line)["evidence_id"]) for line in evidence_lines
+    }
+    context = "\n".join(evidence_lines) or "（没有可供提取的已审核、已授权证据）"
+    prompt = (
+        "你是青迹的结论候选提取助手，不是事实裁判。请从给定的、已经人工批准且"
+        "已确认授权的脱敏证据中，提取适合作为后续核验对象的明确事实性陈述。"
+        "候选只供用户选择后再由系统核验，不是最终结论。不得补造人物、数量、时间、"
+        "地点、因果或范围；不得把团队分析、建议、来源边界说明当成事实。"
+        "一条候选只表达一个清晰判断，避免“普遍”“全部”“显著”等无法由材料直接"
+        "说明的泛化；若没有适合的陈述，返回空数组。只返回一个 JSON 对象，"
+        "不要 Markdown 代码围栏。\n\n"
+        "JSON 字段必须为：candidates（数组，每项包含 claim_text、evidence_ids；"
+        f"最多 {max_candidates} 项；evidence_ids 至少一个且只能使用给定 evidence_id 的整数）、"
+        "uncertainties（最多 8 条）。claim_text 不超过 300 字，必须能由所列证据直接复核。\n\n"
+        "已批准证据（每行一个 JSON 对象）：\n"
         f"{context}"
     )
     return prompt, allowed_ids
@@ -625,6 +696,55 @@ def _parse_claim_evidence_review(
     )
 
 
+def _parse_claim_candidates(
+    response: Mapping[str, Any],
+    *,
+    allowed_ids: set[int],
+    max_candidates: int,
+    model: str,
+) -> ClaimCandidateAdvice:
+    data = _extract_json_object(_response_content(response))
+    raw_candidates = data.get("candidates")
+    if not isinstance(raw_candidates, list):
+        raise LLMResponseError("模型字段 candidates 必须是数组。")
+    parsed: list[ClaimCandidateItem] = []
+    seen_texts: set[str] = set()
+    for raw_item in raw_candidates[:max_candidates]:
+        if not isinstance(raw_item, Mapping):
+            raise LLMResponseError("模型结论候选项格式不正确。")
+        claim_text = _clean_text(raw_item.get("claim_text"), limit=300)
+        raw_ids = raw_item.get("evidence_ids")
+        if not claim_text or not isinstance(raw_ids, list) or not raw_ids:
+            raise LLMResponseError("模型结论候选必须包含 claim_text 和 evidence_ids。")
+        evidence_ids: list[int] = []
+        for raw_id in raw_ids[:20]:
+            try:
+                evidence_id = int(raw_id)
+            except (TypeError, ValueError) as exc:
+                raise LLMResponseError("模型候选引用了非整数证据编号。") from exc
+            if evidence_id not in allowed_ids:
+                raise LLMResponseError(
+                    f"模型候选引用了本次上下文之外的证据 E{evidence_id}。"
+                )
+            if evidence_id not in evidence_ids:
+                evidence_ids.append(evidence_id)
+        normalized = claim_text.rstrip("。！？!?；; ").replace(" ", "")
+        if not normalized or normalized in seen_texts:
+            continue
+        seen_texts.add(normalized)
+        parsed.append(
+            ClaimCandidateItem(
+                claim_text=claim_text,
+                evidence_ids=tuple(evidence_ids),
+            )
+        )
+    return ClaimCandidateAdvice(
+        candidates=tuple(parsed),
+        uncertainties=_string_list(data.get("uncertainties"), field="uncertainties"),
+        model=model,
+    )
+
+
 def request_claim_evidence_review(
     claim_text: str,
     evidence_rows: Sequence[Mapping[str, Any]],
@@ -658,6 +778,98 @@ def request_claim_evidence_review(
     return _parse_claim_evidence_review(
         response,
         allowed_ids=allowed_ids,
+        model=current.model,
+    )
+
+
+def request_claim_candidates(
+    evidence_rows: Sequence[Mapping[str, Any]],
+    *,
+    max_candidates: int = 12,
+    config: LLMSettings | None = None,
+    post_json: Callable[
+        [str, Mapping[str, str], Mapping[str, Any], float], Mapping[str, Any]
+    ]
+    | None = None,
+) -> ClaimCandidateAdvice:
+    """Extract selectable claims from all eligible evidence in bounded batches."""
+
+    current = config or llm_settings
+    if not current.configured:
+        raise LLMConfigurationError(
+            "尚未启用大模型结论候选提取。请配置 QINGJI_LLM_ENABLED、"
+            "QINGJI_LLM_API_KEY 和 QINGJI_LLM_MODEL。"
+        )
+    if isinstance(max_candidates, bool) or not isinstance(max_candidates, int) or max_candidates <= 0:
+        raise ValueError("max_candidates must be a positive integer")
+
+    eligible = _eligible_evidence(evidence_rows)
+    if not eligible:
+        raise LLMResponseError("当前没有可供提取的已审核、已授权证据。")
+    bounded_rows = [
+        {
+            **item,
+            "id": item["evidence_id"],
+            "review_status": ReviewStatus.APPROVED.value,
+            "consent_status": ConsentStatus.CONFIRMED.value,
+        }
+        for item in eligible
+    ]
+    batch_limit_chars = max(1800, min(current.max_context_chars - 1800, 9000))
+    batches: list[list[dict[str, Any]]] = []
+    batch: list[dict[str, Any]] = []
+    batch_chars = 0
+    for row in bounded_rows:
+        row_chars = len(json.dumps(row, ensure_ascii=False)) + 120
+        if batch and batch_chars + row_chars > batch_limit_chars:
+            batches.append(batch)
+            batch = []
+            batch_chars = 0
+        batch.append(row)
+        batch_chars += row_chars
+    if batch:
+        batches.append(batch)
+
+    per_batch_limit = max(1, (max_candidates + len(batches) - 1) // len(batches))
+    post = post_json or _default_post_json
+
+    def extract_batch(batch_rows: list[dict[str, Any]]) -> ClaimCandidateAdvice:
+        prompt, allowed_ids = build_claim_candidate_prompt(
+            batch_rows,
+            max_candidates=per_batch_limit,
+            max_context_chars=current.max_context_chars,
+        )
+        response = _call_chat_completion(prompt, config=current, post_json=post)
+        return _parse_claim_candidates(
+            response,
+            allowed_ids=allowed_ids,
+            max_candidates=per_batch_limit,
+            model=current.model,
+        )
+
+    worker_count = min(_SEMANTIC_CARD_MAX_PARALLEL_REQUESTS, len(batches))
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = [executor.submit(extract_batch, batch_rows) for batch_rows in batches]
+        batch_results = [future.result() for future in futures]
+
+    merged: list[ClaimCandidateItem] = []
+    uncertainties: list[str] = []
+    seen_texts: set[str] = set()
+    for advice in batch_results:
+        uncertainties.extend(advice.uncertainties)
+        for candidate in advice.candidates:
+            normalized = candidate.claim_text.rstrip("。！？!?；; ").replace(" ", "")
+            if normalized in seen_texts:
+                continue
+            seen_texts.add(normalized)
+            merged.append(candidate)
+            if len(merged) >= max_candidates:
+                break
+        if len(merged) >= max_candidates:
+            break
+    return ClaimCandidateAdvice(
+        candidates=tuple(merged),
+        uncertainties=tuple(dict.fromkeys(uncertainties))[:_MAX_LIST_ITEMS],
         model=current.model,
     )
 

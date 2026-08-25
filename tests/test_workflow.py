@@ -32,6 +32,7 @@ from qingji.workflow import (
     regenerate_rejected_evidence_card,
     regenerate_rejected_material_evidence_cards,
     recheck_claim,
+    recheck_project_claims,
     review_evidence_card,
     review_evidence_cards,
 )
@@ -436,6 +437,28 @@ class WorkflowTestCase(unittest.TestCase):
         self.assertEqual(
             len(self.db.list_followup_tasks(claim_id=stored.claim_id)),
             task_count_after_check,
+        )
+
+    def test_recheck_project_claims_refreshes_only_current_project(self) -> None:
+        first = check_and_store_claim(self.db, self.project_id, SIMPLE_CLAIM)
+        second = check_and_store_claim(self.db, self.project_id, GROUP_CLAIM)
+        other_project_id = self.db.create_project("其他项目")
+        other = check_and_store_claim(self.db, other_project_id, SIMPLE_CLAIM)
+        other_run_before = self.db.get_latest_claim_run(
+            other.claim_id, "claim_retrieval"
+        )
+
+        refreshed = recheck_project_claims(self.db, self.project_id)
+
+        self.assertEqual(
+            {item.claim_id for item in refreshed}, {first.claim_id, second.claim_id}
+        )
+        self.assertIsNotNone(
+            self.db.get_latest_claim_run(first.claim_id, "claim_retrieval")
+        )
+        self.assertEqual(
+            self.db.get_latest_claim_run(other.claim_id, "claim_retrieval")["id"],
+            other_run_before["id"],
         )
 
     def test_same_claim_text_updates_instead_of_duplicating(self) -> None:

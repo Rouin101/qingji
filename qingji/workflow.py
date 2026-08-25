@@ -704,6 +704,17 @@ def recheck_claim(
     )
 
 
+def recheck_project_claims(
+    db: Any, project_id: int
+) -> tuple[StoredClaimResult, ...]:
+    """Recheck every saved claim in one project against its latest evidence."""
+
+    return tuple(
+        recheck_claim(db, int(claim["id"]))
+        for claim in db.list_claims(int(project_id))
+    )
+
+
 def review_evidence_card(
     db: Any,
     evidence_card_id: int,

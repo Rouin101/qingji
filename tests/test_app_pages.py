@@ -457,6 +457,59 @@ class AppPageSmokeTest(unittest.TestCase):
             "新提交的结论应立即成为当前详情",
         )
 
+    def test_claim_page_shows_model_candidate_and_bulk_recheck_actions(self) -> None:
+        database = get_database()
+        project_id = database.create_project("结论候选页面检查")
+        _import_model_generated_material(
+            database,
+            project_id,
+            "受访者表示线上办理时需要人工帮助。",
+            original_filename="结论候选材料.txt",
+            source_role="受访者",
+            context="结论候选页面检查场景",
+            captured_at="2026-08-25",
+            consent_status="confirmed",
+            custom_sensitive_terms=None,
+            is_fictional=False,
+        )
+        card = database.list_evidence_cards(project_id)[0]
+        database.set_evidence_review_status(int(card["id"]), "approved")
+        claim_id = database.create_claim(
+            project_id,
+            "有受访者表示线上办理时需要人工帮助。",
+            reason="待重新核验。",
+        )
+        configured = qingji_config.LLMSettings(
+            enabled=True,
+            base_url="https://example.test/v1",
+            api_key="test-key",
+            model="test-model",
+            timeout_seconds=30,
+            max_context_chars=12000,
+        )
+
+        with patch.object(qingji_config, "llm_settings", configured):
+            app = AppTest.from_file("app.py", default_timeout=30)
+            app.run()
+            app.session_state["qingji_project_id"] = project_id
+            app.session_state["active_claim_id"] = claim_id
+            app.switch_page("pages/2_结论核验.py")
+            app.run()
+
+        self.assertEqual(app.exception, [])
+        self.assertTrue(
+            any(
+                item.key == f"extract_claim_candidates_{project_id}"
+                for item in app.button
+            )
+        )
+        self.assertTrue(
+            any(
+                item.key == f"recheck_all_claims_{project_id}"
+                for item in app.button
+            )
+        )
+
     def test_claim_details_never_cross_project_boundary(self) -> None:
         app = self._open_claim_page()
         foreign_claim_id = int(app.session_state["active_claim_id"])

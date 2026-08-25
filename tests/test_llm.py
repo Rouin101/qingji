@@ -9,6 +9,7 @@ from qingji.llm import (
     LLMConfigurationError,
     LLMResponseError,
     build_claim_assistance_prompt,
+    build_claim_candidate_prompt,
     build_claim_evidence_review_prompt,
     build_evidence_assistance_prompt,
     build_evidence_card_generation_prompt,
@@ -16,6 +17,7 @@ from qingji.llm import (
     build_evidence_review_prompt,
     probe_llm_connection,
     request_claim_evidence_review,
+    request_claim_candidates,
     request_evidence_review_batch,
     request_evidence_review,
     request_evidence_card_generation,
@@ -50,6 +52,74 @@ def _evaluation() -> ClaimEvaluation:
 
 
 class LLMTests(unittest.TestCase):
+    def test_claim_candidates_are_redacted_traceable_and_bounded(self) -> None:
+        captured: dict[str, object] = {}
+
+        def fake_post(url, headers, payload, timeout):
+            captured["payload"] = payload
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                '{"candidates":[{"claim_text":"一名受访者表示线上办理时需要人工帮助。",'
+                                '"evidence_ids":[1]}],"uncertainties":["样本仅反映个体经历"]}'
+                            )
+                        }
+                    }
+                ]
+            }
+
+        advice = request_claim_candidates(
+            [
+                {
+                    "id": 1,
+                    "title": "受访者联系 test@example.com",
+                    "quote": "一名受访者遇到困难，手机号 13812345678。",
+                    "summary": "需要人工帮助",
+                    "review_status": "approved",
+                    "consent_status": "confirmed",
+                },
+                {
+                    "id": 2,
+                    "title": "未批准证据",
+                    "quote": "不应进入模型上下文",
+                    "summary": "draft",
+                    "review_status": "draft",
+                    "consent_status": "confirmed",
+                },
+            ],
+            config=_config(),
+            post_json=fake_post,
+        )
+
+        self.assertEqual(len(advice.candidates), 1)
+        self.assertEqual(advice.candidates[0].evidence_ids, (1,))
+        self.assertNotIn("test@example.com", str(captured["payload"]))
+        self.assertNotIn("13812345678", str(captured["payload"]))
+        self.assertNotIn('"evidence_id":2', str(captured["payload"]))
+
+    def test_claim_candidate_prompt_rejects_unapproved_cards(self) -> None:
+        prompt, allowed = build_claim_candidate_prompt(
+            [
+                {
+                    "id": 1,
+                    "quote": "已批准材料。",
+                    "review_status": "approved",
+                    "consent_status": "confirmed",
+                },
+                {
+                    "id": 2,
+                    "quote": "未授权材料。",
+                    "review_status": "approved",
+                    "consent_status": "unknown",
+                },
+            ]
+        )
+        self.assertEqual(allowed, {1})
+        self.assertIn('"evidence_id":1', prompt)
+        self.assertNotIn('"evidence_id":2', prompt)
+
     def test_prompt_only_contains_eligible_boundary_redacted_fields(self) -> None:
         prompt, allowed = build_claim_assistance_prompt(
             "居民普遍认为平台使用困难。",
