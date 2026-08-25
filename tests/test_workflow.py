@@ -182,6 +182,59 @@ class WorkflowTestCase(unittest.TestCase):
             "completed",
         )
 
+    def test_confirmed_import_keeps_valid_model_cards_after_overlap(self) -> None:
+        advice = EvidenceCardGenerationAdvice(
+            cards=(
+                EvidenceCardGenerationItem(
+                    segment_ids=(1,),
+                    title="第一条事实",
+                    summary="模型确认第一条是可审核的具体事实。",
+                    evidence_type="formal_record",
+                    uncertainties=(),
+                ),
+            ),
+            uncertainties=(),
+            model="test-model",
+            chunk_count=1,
+            discarded_card_count=1,
+        )
+
+        with patch(
+            "qingji.workflow.llm_settings",
+            SimpleNamespace(configured=True),
+        ), patch(
+            "qingji.workflow.request_evidence_card_generation",
+            return_value=advice,
+        ):
+            result = import_text_material(
+                self.db,
+                self.project_id,
+                "第一条事实。第二条事实。",
+                original_filename="模型重叠卡片测试.txt",
+                source_role="正式记录",
+                context="模型重叠卡片测试场景",
+                captured_at="2026-08-25",
+                consent_status=ConsentStatus.CONFIRMED,
+                custom_sensitive_terms=None,
+                is_fictional=False,
+            )
+
+        cards = [
+            self.db.get_evidence_card(card_id)
+            for card_id in result.evidence_card_ids
+        ]
+        self.assertEqual(
+            [card["quote"] for card in cards],
+            ["第一条事实。", "第二条事实。"],
+        )
+        self.assertTrue(any("跳过 1 张" in warning for warning in result.warnings))
+        self.assertEqual(
+            self.db.get_latest_project_run(
+                self.project_id, "llm_evidence_card_generation"
+            )["status"],
+            "completed",
+        )
+
     def test_long_import_compacts_model_card_candidates(self) -> None:
         advice = EvidenceCardGenerationAdvice(
             cards=(),

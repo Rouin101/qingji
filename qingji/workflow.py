@@ -333,6 +333,39 @@ def import_text_material(
                 )
                 drafts = _model_card_drafts(material_id, full_card_segments, advice)
                 used_semantic_cards = bool(drafts)
+                discarded_card_count = int(
+                    getattr(advice, "discarded_card_count", 0) or 0
+                )
+                if discarded_card_count:
+                    semantic_segment_ids = {
+                        segment_id
+                        for card in advice.cards
+                        for segment_id in card.segment_ids
+                    }
+                    uncovered_segments = [
+                        segment
+                        for segment in full_card_segments
+                        if int(segment["id"]) not in semantic_segment_ids
+                    ]
+                    remaining_card_capacity = max(
+                        0,
+                        _MAX_EVIDENCE_CARDS_PER_MATERIAL - len(drafts),
+                    )
+                    fallback_drafts = []
+                    if uncovered_segments and remaining_card_capacity:
+                        fallback_drafts = generate_evidence_drafts(
+                            material_id,
+                            uncovered_segments,
+                            source_role,
+                            max_cards=remaining_card_capacity,
+                            target_chars=_EVIDENCE_CARD_TARGET_CHARS,
+                        )
+                        drafts.extend(fallback_drafts)
+                    warnings.append(
+                        f"语义整理跳过 {discarded_card_count} 张重复引用片段的卡片，"
+                        f"保留 {len(advice.cards)} 张有效语义卡，并使用本地规则补充 "
+                        f"{len(fallback_drafts)} 张其余片段卡。"
+                    )
                 db.create_agent_run(
                     project_id,
                     "llm_evidence_card_generation",

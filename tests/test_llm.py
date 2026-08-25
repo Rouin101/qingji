@@ -401,6 +401,49 @@ class LLMTests(unittest.TestCase):
                 post_json=fake_post,
             )
 
+    def test_semantic_card_generation_discards_only_overlapping_cards(self) -> None:
+        def fake_post(url, headers, payload, timeout):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                '{"cards":['
+                                '{"segment_ids":[1],"title":"第一项",'
+                                '"summary":"第一段记录了具体事实。",'
+                                '"evidence_type":"formal_record",'
+                                '"uncertainties":[]},'
+                                '{"segment_ids":[1,2],"title":"重叠项",'
+                                '"summary":"这张卡与第一张重复使用第一段。",'
+                                '"evidence_type":"formal_record",'
+                                '"uncertainties":[]},'
+                                '{"segment_ids":[3],"title":"第三项",'
+                                '"summary":"第三段记录了另一项具体事实。",'
+                                '"evidence_type":"formal_record",'
+                                '"uncertainties":[]}'
+                                '],"uncertainties":[]}'
+                            )
+                        }
+                    }
+                ]
+            }
+
+        advice = request_evidence_card_generation(
+            [
+                {"id": 1, "redacted_text": "第一段"},
+                {"id": 2, "redacted_text": "第二段"},
+                {"id": 3, "redacted_text": "第三段"},
+            ],
+            config=_config(),
+            post_json=fake_post,
+        )
+
+        self.assertEqual(
+            [card.segment_ids for card in advice.cards],
+            [(1,), (3,)],
+        )
+        self.assertEqual(advice.discarded_card_count, 1)
+
     def test_semantic_card_generation_reports_progress_for_multiple_batches(self) -> None:
         import re
 

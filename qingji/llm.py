@@ -122,6 +122,7 @@ class EvidenceCardGenerationAdvice:
     uncertainties: tuple[str, ...]
     model: str
     chunk_count: int
+    discarded_card_count: int = 0
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -129,6 +130,7 @@ class EvidenceCardGenerationAdvice:
             "chunk_count": self.chunk_count,
             "cards": [card.as_dict() for card in self.cards],
             "uncertainties": list(self.uncertainties),
+            "discarded_card_count": self.discarded_card_count,
         }
 
 
@@ -896,7 +898,7 @@ def _parse_evidence_card_generation(
     allowed_ids: Sequence[int],
     max_cards: int,
     model: str,
-) -> tuple[tuple[EvidenceCardGenerationItem, ...], tuple[str, ...]]:
+) -> tuple[tuple[EvidenceCardGenerationItem, ...], tuple[str, ...], int]:
     data = _extract_json_object(_response_content(response))
     raw_cards = data.get("cards")
     if not isinstance(raw_cards, list):
@@ -908,6 +910,7 @@ def _parse_evidence_card_generation(
     position = {segment_id: index for index, segment_id in enumerate(ordered_ids)}
     used_ids: set[int] = set()
     parsed: list[EvidenceCardGenerationItem] = []
+    discarded_card_count = 0
     allowed_types = {item.value for item in EvidenceType}
     for raw_item in raw_cards:
         if not isinstance(raw_item, Mapping):
@@ -927,7 +930,11 @@ def _parse_evidence_card_generation(
         if positions != list(range(positions[0], positions[0] + len(positions))):
             raise LLMResponseError("模型语义证据卡只能引用连续的相邻片段。")
         if used_ids.intersection(segment_ids):
-            raise LLMResponseError("模型语义证据卡之间不能重复占用片段。")
+            # A later card that overlaps an earlier valid one is safe to omit:
+            # preserving the earlier card maintains one-to-one provenance, and
+            # the workflow can locally cover any remaining unused segments.
+            discarded_card_count += 1
+            continue
 
         title = _clean_text(raw_item.get("title"), limit=80)
         summary = _clean_text(raw_item.get("summary"), limit=240)
@@ -949,7 +956,11 @@ def _parse_evidence_card_generation(
         )
         used_ids.update(segment_ids)
 
-    return tuple(parsed), _string_list(data.get("uncertainties"), field="uncertainties")
+    return (
+        tuple(parsed),
+        _string_list(data.get("uncertainties"), field="uncertainties"),
+        discarded_card_count,
+    )
 
 
 def request_evidence_card_generation(
@@ -1022,7 +1033,12 @@ def request_evidence_card_generation(
         batch_index: int,
         batch: list[dict[str, Any]],
         batch_limit: int,
-    ) -> tuple[int, tuple[EvidenceCardGenerationItem, ...], tuple[str, ...]]:
+    ) -> tuple[
+        int,
+        tuple[EvidenceCardGenerationItem, ...],
+        tuple[str, ...],
+        int,
+    ]:
         prompt, allowed_ids = build_evidence_card_generation_prompt(
             batch,
             consent_status=consent_status,
@@ -1036,17 +1052,22 @@ def request_evidence_card_generation(
             config=current,
             post_json=post,
         )
-        cards, uncertainties = _parse_evidence_card_generation(
+        cards, uncertainties, discarded_card_count = _parse_evidence_card_generation(
             response,
             allowed_ids=allowed_ids,
             max_cards=batch_limit,
             model=current.model,
         )
-        return batch_index, cards, uncertainties
+        return batch_index, cards, uncertainties, discarded_card_count
 
     completed_batches = 0
     generated_by_batch: dict[
-        int, tuple[tuple[EvidenceCardGenerationItem, ...], tuple[str, ...]]
+        int,
+        tuple[
+            tuple[EvidenceCardGenerationItem, ...],
+            tuple[str, ...],
+            int,
+        ],
     ] = {}
     worker_count = min(_SEMANTIC_CARD_MAX_PARALLEL_REQUESTS, len(batch_specs))
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
@@ -1055,24 +1076,31 @@ def request_evidence_card_generation(
             for batch_index, batch, batch_limit in batch_specs
         ]
         for future in as_completed(futures):
-            batch_index, cards, uncertainties = future.result()
-            generated_by_batch[batch_index] = (cards, uncertainties)
+            batch_index, cards, uncertainties, discarded_card_count = future.result()
+            generated_by_batch[batch_index] = (
+                cards,
+                uncertainties,
+                discarded_card_count,
+            )
             completed_batches += 1
             if progress_callback is not None:
                 progress_callback(completed_batches, len(batch_specs))
 
     all_cards: list[EvidenceCardGenerationItem] = []
     all_uncertainties: list[str] = []
+    discarded_card_count = 0
     for batch_index in range(len(batch_specs)):
-        cards, uncertainties = generated_by_batch[batch_index]
+        cards, uncertainties, batch_discarded_count = generated_by_batch[batch_index]
         all_cards.extend(cards)
         all_uncertainties.extend(uncertainties)
+        discarded_card_count += batch_discarded_count
 
     return EvidenceCardGenerationAdvice(
         cards=tuple(all_cards[:max_cards]),
         uncertainties=tuple(dict.fromkeys(all_uncertainties))[:_MAX_LIST_ITEMS],
         model=current.model,
         chunk_count=len(batches),
+        discarded_card_count=discarded_card_count,
     )
 
 
