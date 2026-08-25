@@ -3,11 +3,56 @@
 from __future__ import annotations
 
 import os
+import re
+from collections.abc import MutableMapping
 from dataclasses import dataclass
 from pathlib import Path
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+_ENV_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _load_dotenv(
+    path: Path | None = None,
+    *,
+    environ: MutableMapping[str, str] | None = None,
+) -> None:
+    """Load local ``.env`` values without overriding real environment values.
+
+    The project intentionally keeps this small instead of making a runtime
+    dependency mandatory.  It supports ordinary ``KEY=value`` lines, optional
+    ``export`` prefixes and quoted values.  Malformed lines are ignored so a
+    local comment or an unfinished value never prevents the app from starting.
+    """
+
+    target = environ if environ is not None else os.environ
+    env_path = path or (BASE_DIR / ".env")
+    try:
+        lines = env_path.read_text(encoding="utf-8-sig").splitlines()
+    except FileNotFoundError:
+        return
+
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].lstrip()
+        key, separator, value = line.partition("=")
+        key = key.strip()
+        if not separator or not _ENV_KEY.fullmatch(key) or key in target:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        else:
+            value = value.split(" #", 1)[0].rstrip()
+        target[key] = value
+
+
+_load_dotenv()
 
 
 @dataclass(frozen=True)
