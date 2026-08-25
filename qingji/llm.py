@@ -176,6 +176,7 @@ class ClaimEvidenceReviewAdvice:
     reviews: tuple[ClaimEvidenceReviewItem, ...]
     uncertainties: tuple[str, ...]
     model: str
+    safe_rewrite: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -189,6 +190,7 @@ class ClaimEvidenceReviewAdvice:
                 for item in self.reviews
             ],
             "uncertainties": list(self.uncertainties),
+            "safe_rewrite": self.safe_rewrite,
         }
 
 
@@ -381,7 +383,10 @@ def build_claim_evidence_review_prompt(
         "evidence_id 各返回一项；无法直接对应时返回 context。"
         "只返回一个 JSON 对象，不要 Markdown 代码围栏。\n\n"
         "JSON 字段必须为：evidence_reviews（数组，每项包含 evidence_id、relation、"
-        "rationale；relation 只能是 support、contradict、context）、uncertainties（最多 8 条）。\n\n"
+        "rationale；relation 只能是 support、contradict、context）、safe_rewrite（不超过 240 字的"
+        "保守改写）、uncertainties（最多 8 条）。safe_rewrite 必须与原结论有实质不同，不能补造"
+        "人物、数量、时间、地点、因果或未出现的事实；若没有直接支持，应明确改写为“现有材料不足以"
+        "说明”而不是保留原断言。\n\n"
         f"待核验结论：{claim}\n"
         "候选证据（每行一个 JSON 对象）：\n"
         f"{context}"
@@ -597,6 +602,7 @@ def _parse_claim_evidence_review(
         reviews=tuple(parsed[evidence_id] for evidence_id in sorted(parsed)),
         uncertainties=_string_list(data.get("uncertainties"), field="uncertainties"),
         model=model,
+        safe_rewrite=_clean_text(data.get("safe_rewrite"), limit=240),
     )
 
 

@@ -141,6 +141,11 @@ def _safe_rewrite(
     if "strong_intensity" in flags:
         rewritten = re.sub(r"显著|极大|严重|完全|大幅|明显", "", rewritten)
         rewritten += "；影响程度仍需进一步量化"
+    if rewritten == claim_text.strip().rstrip("。"):
+        return (
+            f"现有已审核材料中出现与“{rewritten}”一致的表述，"
+            "其适用范围仍限于已收集材料。"
+        )
     return rewritten.rstrip("。；") + "。"
 
 

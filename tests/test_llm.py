@@ -496,6 +496,7 @@ class LLMTests(unittest.TestCase):
                                 '{"evidence_reviews":['
                                 '{"evidence_id":1,"relation":"support",'
                                 '"rationale":"对象与行为直接对应"}],'
+                                '"safe_rewrite":"现有材料显示，部分居民使用平台时遇到困难。",'
                                 '"uncertainties":["样本范围有限"]}'
                             )
                         }
@@ -533,6 +534,7 @@ class LLMTests(unittest.TestCase):
         self.assertNotIn("13812345678", prompt)
         self.assertIn("量词/数量", prompt)
         self.assertIn("必须返回 context", prompt)
+        self.assertIn("safe_rewrite", prompt)
 
         advice = request_claim_evidence_review(
             "居民使用平台时遇到困难。",
@@ -542,6 +544,9 @@ class LLMTests(unittest.TestCase):
         )
         relations = {item.evidence_id: item.relation for item in advice.reviews}
         self.assertEqual(relations, {1: "support", 2: "context"})
+        self.assertEqual(
+            advice.safe_rewrite, "现有材料显示，部分居民使用平台时遇到困难。"
+        )
         self.assertIn("[邮箱]", str(captured["payload"]))
 
     def test_batch_evidence_review_uses_one_json_response_for_all_cards(self) -> None:

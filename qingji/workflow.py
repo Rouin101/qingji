@@ -18,7 +18,7 @@ lives in a temporary directory, so the files stay isolated with it.
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from collections.abc import Mapping, Sequence
@@ -452,6 +452,17 @@ def _semantic_relation_overrides(
     return overrides, rationales, advice, ""
 
 
+def _usable_semantic_rewrite(rewrite: str, claim_text: str) -> str:
+    """Keep only a model rewrite that materially changes the original claim."""
+
+    candidate = str(rewrite or "").strip()
+    original = str(claim_text or "").strip()
+    if not candidate:
+        return ""
+    normalize = lambda value: value.rstrip("。！？!?；; ").replace(" ", "")
+    return "" if normalize(candidate) == normalize(original) else candidate
+
+
 def _task_title(missing_item: str) -> str:
     title = f"补齐：{missing_item}"
     return title if len(title) <= 60 else title[:59] + "…"
@@ -540,6 +551,12 @@ def _store_evaluation(
         max_candidates=8,
         relation_overrides=effective_overrides,
     )
+    if semantic_advice is not None:
+        semantic_rewrite = _usable_semantic_rewrite(
+            semantic_advice.safe_rewrite, claim_text
+        )
+        if semantic_rewrite:
+            evaluation = replace(evaluation, safe_rewrite=semantic_rewrite)
     diagnostic = build_retrieval_diagnostic(
         claim_text,
         evidence_rows,

@@ -101,6 +101,16 @@ class ClaimTests(unittest.TestCase):
         self.assertEqual(result.supporting_evidence_ids, [])
         self.assertEqual(result.context_evidence_ids, [4])
 
+    def test_supported_claim_without_scope_flags_gets_a_conservative_rewrite(self) -> None:
+        claim = "线上办事平台使用困难"
+        result = evaluate_claim(
+            claim,
+            [candidate(5, "我使用线上办事平台时遇到困难。")],
+        )
+
+        self.assertNotEqual(result.safe_rewrite, claim + "。")
+        self.assertIn("已审核材料", result.safe_rewrite)
+
 
 if __name__ == "__main__":
     unittest.main()
