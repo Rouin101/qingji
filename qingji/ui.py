@@ -134,6 +134,17 @@ def configure_page(title: str, icon: str = "🌱") -> None:
               radial-gradient(circle at 8% 96%, rgba(169, 143, 224, .12), transparent 26rem),
               linear-gradient(180deg, #fdfcff 0, #ffffff 30rem);
         }
+        [data-testid="stMainBlockContainer"],
+        .block-container {
+            max-width: none;
+            padding: 1.15rem 1.35rem 3rem;
+        }
+        @media (max-width: 768px) {
+            [data-testid="stMainBlockContainer"],
+            .block-container {
+                padding: .85rem 1rem 2rem;
+            }
+        }
         [data-testid="stSidebar"] {
             background: linear-gradient(180deg, #f7f4fc 0, #f1ebfa 100%);
             border-right: 1px solid var(--qj-line);
