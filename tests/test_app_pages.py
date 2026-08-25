@@ -14,6 +14,7 @@ import os
 import tempfile
 import unittest
 from unittest.mock import patch
+from types import SimpleNamespace
 
 _TEST_DATA_DIR = tempfile.mkdtemp(prefix="qingji_apptest_")
 os.environ["QINGJI_DATA_DIR"] = _TEST_DATA_DIR
@@ -28,6 +29,10 @@ qingji_db.settings = qingji_config.settings
 from streamlit.testing.v1 import AppTest  # noqa: E402
 from qingji.backup import inspect_project_backup  # noqa: E402
 from qingji.diagnostics import RETRIEVAL_DIAGNOSTIC_VERSION  # noqa: E402
+from qingji.llm import (  # noqa: E402
+    EvidenceCardGenerationAdvice,
+    EvidenceCardGenerationItem,
+)
 from qingji.ui import format_datetime, get_database  # noqa: E402
 from qingji.workflow import (  # noqa: E402
     check_and_store_claim,
@@ -41,6 +46,36 @@ PAGES = [
     "pages/2_结论核验.py",
     "pages/3_成果与缺口.py",
 ]
+
+
+def _generate_test_evidence_cards(
+    segments, *, max_cards: int, **_kwargs
+) -> EvidenceCardGenerationAdvice:
+    return EvidenceCardGenerationAdvice(
+        cards=tuple(
+            EvidenceCardGenerationItem(
+                segment_ids=(int(segment["id"]),),
+                title=f"测试材料片段 {index}",
+                summary="模型从该片段中抽取了可供人工复核的明确事实。",
+                evidence_type="formal_record",
+                uncertainties=(),
+            )
+            for index, segment in enumerate(segments[:max_cards], start=1)
+        ),
+        uncertainties=(),
+        model="test-model",
+        chunk_count=1,
+    )
+
+
+def _import_model_generated_material(*args, **kwargs):
+    with patch(
+        "qingji.workflow.llm_settings", SimpleNamespace(configured=True)
+    ), patch(
+        "qingji.workflow.request_evidence_card_generation",
+        side_effect=_generate_test_evidence_cards,
+    ):
+        return import_text_material(*args, **kwargs)
 
 
 class AppPageSmokeTest(unittest.TestCase):
@@ -103,7 +138,7 @@ class AppPageSmokeTest(unittest.TestCase):
     def test_evidence_review_defaults_to_approved(self) -> None:
         database = get_database()
         project_id = database.create_project("证据审核默认状态检查")
-        imported = import_text_material(
+        imported = _import_model_generated_material(
             database,
             project_id,
             "受访者表示线上办事时需要人工帮助。",
@@ -129,7 +164,7 @@ class AppPageSmokeTest(unittest.TestCase):
     def test_bulk_approval_approves_authorized_draft_cards(self) -> None:
         database = get_database()
         project_id = database.create_project("批量审核页面检查")
-        imported = import_text_material(
+        imported = _import_model_generated_material(
             database,
             project_id,
             "受访者表示线上办事时需要人工帮助。",
@@ -256,7 +291,7 @@ class AppPageSmokeTest(unittest.TestCase):
     def test_bulk_regeneration_button_replaces_per_card_buttons(self) -> None:
         database = get_database()
         project_id = database.create_project("批量拒绝卡重新生成页面检查")
-        imported = import_text_material(
+        imported = _import_model_generated_material(
             database,
             project_id,
             "正式记录显示现场安排了人工协助窗口。",
@@ -535,7 +570,7 @@ class AppPageSmokeTest(unittest.TestCase):
     def test_rejecting_evidence_in_page_refreshes_existing_claim(self) -> None:
         database = get_database()
         project_id = database.create_project("页面撤回证据测试")
-        imported = import_text_material(
+        imported = _import_model_generated_material(
             database,
             project_id,
             "一名模拟受访者使用线上办事平台时遇到困难，需要志愿者帮助。",

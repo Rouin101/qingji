@@ -27,7 +27,7 @@ from typing import Any, Callable
 from .claims import evaluate_claim, validate_citation_ids
 from .config import llm_settings
 from .diagnostics import build_retrieval_diagnostic
-from .evidence import generate_evidence_drafts, split_text
+from .evidence import split_text
 from .llm import (
     LLMError,
     request_claim_evidence_review,
@@ -58,10 +58,6 @@ _TASK_RECOMMENDATION = (
 _MAX_CLAIM_LENGTH = 500
 _MAX_EVIDENCE_CARDS_PER_MATERIAL = 40
 _EVIDENCE_CARD_TARGET_CHARS = 720
-_MODEL_INPUT_SEGMENT_THRESHOLD = 24
-_MODEL_INPUT_MAX_CANDIDATES = 24
-_MODEL_INPUT_TARGET_CHARS = 1200
-_MODEL_INPUT_PREVIEW_CHARS = 360
 
 
 @dataclass(frozen=True)
@@ -87,6 +83,14 @@ class EvidenceRegenerationResult:
     source_evidence_card_id: int
     replacement_evidence_card_id: int
     rejection_reason: str
+
+
+@dataclass(frozen=True)
+class MaterialEvidenceRegenerationResult:
+    material_id: int
+    source_evidence_card_ids: tuple[int, ...]
+    replacement_evidence_card_ids: tuple[int, ...]
+    rejection_reasons: tuple[str, ...]
 
 
 def _status_value(value: Any) -> str:
@@ -148,49 +152,17 @@ def _model_generation_candidates(
     segments: Sequence[Mapping[str, Any]],
     source_role: str,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Prepare compact model inputs while keeping complete local quotes.
+    """Return the original redacted segments as the model's card boundary.
 
-    Long reports may contain hundreds of short persisted segments.  The model
-    sees a bounded preview of locally merged, traceable candidate blocks; the
-    returned ids are then resolved against the full local block so no raw text
-    is sent and the reviewer still receives the complete redacted quote.
+    Evidence cards must be chosen by the model from persisted source segments.
+    Local code may split and store text for traceability, but it must never
+    merge text into a candidate card or supply a final card boundary.  The LLM
+    request function batches these source segments within its own context limit.
     """
 
-    if len(segments) <= _MODEL_INPUT_SEGMENT_THRESHOLD:
-        copied = [dict(segment) for segment in segments]
-        return copied, copied
-
-    local_drafts = generate_evidence_drafts(
-        material_id,
-        segments,
-        source_role,
-        max_cards=_MODEL_INPUT_MAX_CANDIDATES,
-        target_chars=_MODEL_INPUT_TARGET_CHARS,
-    )
-    model_segments: list[dict[str, Any]] = []
-    full_segments: list[dict[str, Any]] = []
-    for sequence_no, draft in enumerate(local_drafts, start=1):
-        full_quote = draft.quote.strip()
-        preview = full_quote[:_MODEL_INPUT_PREVIEW_CHARS].rstrip()
-        if len(full_quote) > _MODEL_INPUT_PREVIEW_CHARS:
-            preview += "…"
-        model_segments.append(
-            {
-                "id": draft.segment_id,
-                "sequence_no": sequence_no,
-                "locator": draft.source_locator,
-                "redacted_text": f"摘要：{draft.summary}\n原文预览：{preview}",
-            }
-        )
-        full_segments.append(
-            {
-                "id": draft.segment_id,
-                "sequence_no": sequence_no,
-                "locator": draft.source_locator,
-                "redacted_text": full_quote,
-            }
-        )
-    return model_segments, full_segments
+    del material_id, source_role
+    copied = [dict(segment) for segment in segments]
+    return copied, copied
 
 
 def _storage_dirs(db: Any) -> tuple[Path, Path]:
@@ -296,7 +268,7 @@ def import_text_material(
     warnings: list[str] = []
     if used_segment_fallback:
         warnings.append(
-            "正常分段没有产生片段，已使用脱敏材料全文作为兜底卡输入，请人工核对。"
+            "正常分段没有产生片段，已将脱敏材料全文交由模型重新提取可审核事实。"
         )
     if pii_kinds:
         warnings.append(
@@ -308,8 +280,7 @@ def import_text_material(
 
     evidence_card_ids: list[int] = []
     if consent == ConsentStatus.CONFIRMED.value:
-        drafts: list[EvidenceDraft] | None = None
-        used_semantic_cards = False
+        drafts: list[EvidenceDraft] = []
         if llm_settings.configured:
             try:
                 if progress_callback is not None:
@@ -332,39 +303,14 @@ def import_text_material(
                     ),
                 )
                 drafts = _model_card_drafts(material_id, full_card_segments, advice)
-                used_semantic_cards = bool(drafts)
                 discarded_card_count = int(
                     getattr(advice, "discarded_card_count", 0) or 0
                 )
                 if discarded_card_count:
-                    semantic_segment_ids = {
-                        segment_id
-                        for card in advice.cards
-                        for segment_id in card.segment_ids
-                    }
-                    uncovered_segments = [
-                        segment
-                        for segment in full_card_segments
-                        if int(segment["id"]) not in semantic_segment_ids
-                    ]
-                    remaining_card_capacity = max(
-                        0,
-                        _MAX_EVIDENCE_CARDS_PER_MATERIAL - len(drafts),
-                    )
-                    fallback_drafts = []
-                    if uncovered_segments and remaining_card_capacity:
-                        fallback_drafts = generate_evidence_drafts(
-                            material_id,
-                            uncovered_segments,
-                            source_role,
-                            max_cards=remaining_card_capacity,
-                            target_chars=_EVIDENCE_CARD_TARGET_CHARS,
-                        )
-                        drafts.extend(fallback_drafts)
                     warnings.append(
                         f"语义整理跳过 {discarded_card_count} 张重复引用片段的卡片，"
-                        f"保留 {len(advice.cards)} 张有效语义卡，并使用本地规则补充 "
-                        f"{len(fallback_drafts)} 张其余片段卡。"
+                        f"保留 {len(advice.cards)} 张有效语义卡；"
+                        "未覆盖片段不会使用本地规则补卡。"
                     )
                 db.create_agent_run(
                     project_id,
@@ -378,7 +324,8 @@ def import_text_material(
                 )
                 if not drafts:
                     warnings.append(
-                        "材料已完成语义整理，但没有抽取出明确事实，已使用本地规则生成兜底审核卡。"
+                        "材料已完成语义整理，但没有抽取出可独立复核的明确事实，"
+                        "因此未生成证据卡。"
                     )
             except (LLMError, ValueError, KeyError) as exc:
                 db.create_agent_run(
@@ -392,52 +339,17 @@ def import_text_material(
                     error_message=str(exc),
                 )
                 warnings.append(
-                    "语义整理未完成，已使用本地规则生成审核卡，请人工核对内容边界。"
+                    "语义整理未完成，本次不会使用本地规则生成证据卡。"
+                    "请检查模型服务后重新导入或重新整理材料。"
                 )
-
-        if drafts is None or not drafts:
-            if progress_callback is not None:
-                progress_callback("正在本地合并并生成可审核证据卡……")
-            drafts = generate_evidence_drafts(
-                material_id,
-                segments,
-                source_role,
-                max_cards=_MAX_EVIDENCE_CARDS_PER_MATERIAL,
-                target_chars=_EVIDENCE_CARD_TARGET_CHARS,
-            )
-        if len(drafts) < len(segments):
-            generation_action = (
-                "语义整理生成" if used_semantic_cards else "合并生成"
-            )
+        else:
             warnings.append(
-                f"正文已保存为 {len(segments)} 个可追溯片段，并{generation_action} "
-                f"{len(drafts)} 张审核卡，避免长材料产生过多重复审核项。"
+                "尚未配置可用的大模型，本次不会使用本地规则生成证据卡。"
             )
-        if not drafts:
-            # Last-resort full-text card: preserving one reviewable card is
-            # safer than reporting a successful import with zero cards.
-            fallback_segment_id = db.create_segment(
-                material_id,
-                len(segments) + 1,
-                redaction.redacted_text.strip(),
-                locator="材料全文（兜底）",
-                pii_flags=pii_kinds,
-            )
-            fallback_segment = {
-                "id": fallback_segment_id,
-                "redacted_text": redaction.redacted_text.strip(),
-                "locator": "材料全文（兜底）",
-            }
-            drafts = generate_evidence_drafts(
-                material_id,
-                [fallback_segment],
-                source_role,
-                max_cards=1,
-                target_chars=max(_EVIDENCE_CARD_TARGET_CHARS, 720),
-            )
+        if drafts and len(drafts) < len(segments):
             warnings.append(
-                "正常分段没有生成审核卡，系统已使用脱敏材料全文生成 1 张兜底卡，"
-                "请重点人工核对其来源和内容边界。"
+                f"正文已保存为 {len(segments)} 个可追溯片段，并由模型生成 "
+                f"{len(drafts)} 张审核卡。"
             )
         for draft in drafts:
             card_id = db.create_evidence_card(
@@ -953,7 +865,7 @@ def list_regenerable_rejected_evidence_cards(
         int(event["evidence_card_id"])
         for event in review_events
         if str(event.get("change_reason") or "").startswith(
-            "已根据拒绝理由生成替代卡"
+            "已根据拒绝理由生成"
         )
     }
     return tuple(
@@ -962,6 +874,108 @@ def list_regenerable_rejected_evidence_cards(
         if _status_value(card.get("consent_status")) == ConsentStatus.CONFIRMED.value
         and int(card["id"]) not in regenerated_source_ids
     )
+
+
+def regenerate_rejected_material_evidence_cards(
+    db: Any, project_id: int
+) -> tuple[MaterialEvidenceRegenerationResult, ...]:
+    """Re-extract replacement cards from each rejected material with the model.
+
+    Reusing a rejected card's quote only changes its label, not its evidence
+    boundary.  This routine instead returns to the persisted redacted source
+    segments and asks the model to extract new, reviewable facts while taking
+    every recorded rejection reason for that material into account.
+    """
+
+    candidates = list_regenerable_rejected_evidence_cards(db, project_id)
+    cards_by_material: dict[int, list[dict[str, Any]]] = {}
+    for card in candidates:
+        cards_by_material.setdefault(int(card["material_id"]), []).append(card)
+
+    results: list[MaterialEvidenceRegenerationResult] = []
+    for material_id, cards in cards_by_material.items():
+        material = db.get_material(material_id)
+        if material is None:
+            raise ValueError(f"材料 M{material_id} 不存在。")
+        if _status_value(material.get("consent_status")) != ConsentStatus.CONFIRMED.value:
+            raise ValueError(f"材料 M{material_id} 尚未确认授权。")
+        segments = db.list_segments(material_id)
+        if not segments:
+            raise ValueError(f"材料 M{material_id} 没有可供重新整理的脱敏片段。")
+
+        source_card_ids = tuple(int(card["id"]) for card in cards)
+        rejection_reasons: list[str] = []
+        for card_id in source_card_ids:
+            events = db.list_evidence_review_events(
+                int(project_id), evidence_card_id=card_id, limit=100
+            )
+            rejection_event = next(
+                (
+                    event
+                    for event in events
+                    if (event.get("after") or {}).get("review_status")
+                    == ReviewStatus.REJECTED.value
+                ),
+                None,
+            )
+            reason = str((rejection_event or {}).get("change_reason") or "").strip()
+            if reason:
+                rejection_reasons.append(reason)
+        if not rejection_reasons:
+            rejection_reasons.append("原卡未通过审核，请只保留可独立复核的明确事实。")
+
+        model_segments, full_card_segments = _model_generation_candidates(
+            material_id, segments, str(material.get("source_role") or "")
+        )
+        advice = request_evidence_card_generation(
+            model_segments,
+            consent_status=material.get("consent_status"),
+            source_role=str(material.get("source_role") or ""),
+            context=str(material.get("context") or ""),
+            review_feedback=rejection_reasons,
+            max_cards=_MAX_EVIDENCE_CARDS_PER_MATERIAL,
+        )
+        drafts = _model_card_drafts(material_id, full_card_segments, advice)
+        if not drafts:
+            raise ValueError(
+                f"材料 M{material_id} 中没有可独立复核的事实，未生成替代卡。"
+            )
+
+        replacement_ids: list[int] = []
+        for draft in drafts:
+            replacement_ids.append(
+                db.create_evidence_card(
+                    int(project_id),
+                    draft.segment_id,
+                    draft.evidence_type,
+                    draft.title,
+                    draft.quote,
+                    draft.summary,
+                    source_locator=(
+                        f"{draft.source_locator} · 根据被拒绝卡片的理由重新整理"
+                    ).strip(" ·"),
+                    review_status=ReviewStatus.DRAFT.value,
+                )
+            )
+        replacement_text = "、".join(f"E{item}" for item in replacement_ids)
+        for card_id in source_card_ids:
+            db.create_evidence_review_event(
+                card_id,
+                before={"review_status": ReviewStatus.REJECTED.value},
+                after={"review_status": ReviewStatus.REJECTED.value},
+                change_reason=(
+                    "已根据拒绝理由生成材料级替代卡 " + replacement_text + "。"
+                ),
+            )
+        results.append(
+            MaterialEvidenceRegenerationResult(
+                material_id=material_id,
+                source_evidence_card_ids=source_card_ids,
+                replacement_evidence_card_ids=tuple(replacement_ids),
+                rejection_reasons=tuple(dict.fromkeys(rejection_reasons)),
+            )
+        )
+    return tuple(results)
 
 
 def review_evidence_cards(

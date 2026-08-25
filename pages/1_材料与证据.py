@@ -31,7 +31,7 @@ from qingji.ui import (
 from qingji.workflow import (
     import_text_material,
     list_regenerable_rejected_evidence_cards,
-    regenerate_rejected_evidence_card,
+    regenerate_rejected_material_evidence_cards,
     review_evidence_card,
     review_evidence_cards,
 )
@@ -856,29 +856,38 @@ with tab_review:
                         with st.spinner(
                             f"正在根据拒绝理由重新生成 {len(regenerable_rejected_cards)} 张证据卡……"
                         ):
-                            for card in regenerable_rejected_cards:
-                                card_id = int(card["id"])
-                                try:
-                                    regenerated = regenerate_rejected_evidence_card(
-                                        db, card_id
+                            try:
+                                regeneration_results = (
+                                    regenerate_rejected_material_evidence_cards(
+                                        db, project_id
                                     )
-                                    created_ids.append(
-                                        regenerated.replacement_evidence_card_id
+                                )
+                            except Exception as exc:
+                                regeneration_failures.append(str(exc))
+                            else:
+                                for regenerated in regeneration_results:
+                                    created_ids.extend(
+                                        regenerated.replacement_evidence_card_ids
                                     )
                                     db.create_agent_run(
                                         project_id,
                                         "llm_evidence_card_regeneration",
                                         input_data={
-                                            "source_evidence_id": card_id,
-                                            "rejection_reason": regenerated.rejection_reason,
+                                            "material_id": regenerated.material_id,
+                                            "source_evidence_ids": list(
+                                                regenerated.source_evidence_card_ids
+                                            ),
+                                            "rejection_reasons": list(
+                                                regenerated.rejection_reasons
+                                            ),
                                             "model": llm_settings.model,
                                         },
                                         output_data={
-                                            "replacement_evidence_id": regenerated.replacement_evidence_card_id
+                                            "replacement_evidence_ids": list(
+                                                regenerated.replacement_evidence_card_ids
+                                            )
                                         },
                                     )
-                                except Exception as exc:
-                                    regeneration_failures.append(f"E{card_id}：{exc}")
                         completion_message = (
                             f"已生成 {len(created_ids)} 张待审核替代卡。"
                             "请审核新卡后再决定是否引用。"

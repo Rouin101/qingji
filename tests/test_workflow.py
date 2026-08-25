@@ -30,6 +30,7 @@ from qingji.workflow import (
     import_text_material,
     list_regenerable_rejected_evidence_cards,
     regenerate_rejected_evidence_card,
+    regenerate_rejected_material_evidence_cards,
     recheck_claim,
     review_evidence_card,
     review_evidence_cards,
@@ -56,10 +57,37 @@ class WorkflowTestCase(unittest.TestCase):
             "qingji.workflow.llm_settings", SimpleNamespace(configured=False)
         )
         self._llm_settings_patcher.start()
+        self._card_generation_patcher = patch(
+            "qingji.workflow.request_evidence_card_generation",
+            side_effect=self._default_model_card_generation,
+        )
+        self._card_generation_patcher.start()
 
     def tearDown(self) -> None:
+        self._card_generation_patcher.stop()
         self._llm_settings_patcher.stop()
         self.temp_dir.cleanup()
+
+    @staticmethod
+    def _default_model_card_generation(
+        segments, *, max_cards: int, **_kwargs
+    ) -> EvidenceCardGenerationAdvice:
+        cards = tuple(
+            EvidenceCardGenerationItem(
+                segment_ids=(int(segment["id"]),),
+                title=f"材料片段 {index}",
+                summary="模型从该片段中抽取了可供人工复核的事实。",
+                evidence_type="formal_record",
+                uncertainties=(),
+            )
+            for index, segment in enumerate(segments[:max_cards], start=1)
+        )
+        return EvidenceCardGenerationAdvice(
+            cards=cards,
+            uncertainties=(),
+            model="test-model",
+            chunk_count=1,
+        )
 
     def _import(
         self,
@@ -71,18 +99,21 @@ class WorkflowTestCase(unittest.TestCase):
         custom_terms: list[str] | None = None,
         filename: str = "虚构测试材料_访谈.txt",
     ) -> dict:
-        result = import_text_material(
-            self.db,
-            self.project_id,
-            text,
-            original_filename=filename,
-            source_role=source_role,
-            context=context,
-            captured_at="2026-07-15T09:10:00+08:00",
-            consent_status=ConsentStatus(consent),
-            custom_sensitive_terms=custom_terms,
-            is_fictional=True,
-        )
+        with patch(
+            "qingji.workflow.llm_settings", SimpleNamespace(configured=True)
+        ):
+            result = import_text_material(
+                self.db,
+                self.project_id,
+                text,
+                original_filename=filename,
+                source_role=source_role,
+                context=context,
+                captured_at="2026-07-15T09:10:00+08:00",
+                consent_status=ConsentStatus(consent),
+                custom_sensitive_terms=custom_terms,
+                is_fictional=True,
+            )
         for card_id in result.evidence_card_ids:
             self.db.set_evidence_review_status(card_id, "approved")
         return result
@@ -226,9 +257,11 @@ class WorkflowTestCase(unittest.TestCase):
         ]
         self.assertEqual(
             [card["quote"] for card in cards],
-            ["第一条事实。", "第二条事实。"],
+            ["第一条事实。"],
         )
-        self.assertTrue(any("跳过 1 张" in warning for warning in result.warnings))
+        self.assertTrue(
+            any("不会使用本地规则补卡" in warning for warning in result.warnings)
+        )
         self.assertEqual(
             self.db.get_latest_project_run(
                 self.project_id, "llm_evidence_card_generation"
@@ -269,9 +302,11 @@ class WorkflowTestCase(unittest.TestCase):
             )
 
         model_candidates = generate_cards.call_args.args[0]
-        self.assertLessEqual(len(model_candidates), 24)
-        self.assertLess(len(model_candidates), len(self.db.list_segments(result.material_id)))
-        self.assertTrue(result.evidence_card_ids)
+        self.assertEqual(
+            len(model_candidates), len(self.db.list_segments(result.material_id))
+        )
+        self.assertEqual(result.evidence_card_ids, [])
+        self.assertTrue(any("未生成证据卡" in warning for warning in result.warnings))
 
     def test_unauthorized_material_has_no_cards_and_is_not_citable(self) -> None:
         result = self._import(DIFFICULTY_TEXT, consent="unknown")
@@ -289,18 +324,21 @@ class WorkflowTestCase(unittest.TestCase):
         )
 
     def test_authorized_real_material_is_supported_without_demo_warning(self) -> None:
-        result = import_text_material(
-            self.db,
-            self.project_id,
-            "受访者表示：首次操作时需要工作人员协助。",
-            original_filename="经授权访谈记录.txt",
-            source_role="受访者",
-            context="社区服务体验访谈",
-            captured_at="2026-08-19",
-            consent_status=ConsentStatus.CONFIRMED,
-            custom_sensitive_terms=None,
-            is_fictional=False,
-        )
+        with patch(
+            "qingji.workflow.llm_settings", SimpleNamespace(configured=True)
+        ):
+            result = import_text_material(
+                self.db,
+                self.project_id,
+                "受访者表示：首次操作时需要工作人员协助。",
+                original_filename="经授权访谈记录.txt",
+                source_role="受访者",
+                context="社区服务体验访谈",
+                captured_at="2026-08-19",
+                consent_status=ConsentStatus.CONFIRMED,
+                custom_sensitive_terms=None,
+                is_fictional=False,
+            )
 
         material = self.db.get_material(result.material_id)
         self.assertEqual(material["is_fictional"], 0)
@@ -532,6 +570,58 @@ class WorkflowTestCase(unittest.TestCase):
         with self.assertRaises(ValueError):
             regenerate_rejected_evidence_card(self.db, int(card["id"]))
 
+    def test_bulk_regeneration_reextracts_from_material_with_rejection_feedback(self) -> None:
+        imported = self._import(DIFFICULTY_TEXT)
+        card = self.db.get_evidence_card(imported.evidence_card_ids[0])
+        review_evidence_card(
+            self.db,
+            int(card["id"]),
+            title=card["title"],
+            summary=card["summary"],
+            evidence_type=card["evidence_type"],
+            review_status="rejected",
+            change_reason="原卡混入了分析性表述，请只保留受访者的明确经历。",
+        )
+        advice = EvidenceCardGenerationAdvice(
+            cards=(
+                EvidenceCardGenerationItem(
+                    segment_ids=(int(card["segment_id"]),),
+                    title="受访者线上办理时遇到验证码填写困难",
+                    summary="受访者明确提到不知道验证码填写位置，后在志愿者帮助下完成申请。",
+                    evidence_type="interview_statement",
+                    uncertainties=(),
+                ),
+            ),
+            uncertainties=(),
+            model="test-model",
+            chunk_count=1,
+        )
+
+        with patch(
+            "qingji.workflow.llm_settings", SimpleNamespace(configured=True)
+        ), patch(
+            "qingji.workflow.request_evidence_card_generation",
+            return_value=advice,
+        ) as generate_cards:
+            regenerated = regenerate_rejected_material_evidence_cards(
+                self.db, self.project_id
+            )
+
+        self.assertEqual(len(regenerated), 1)
+        result = regenerated[0]
+        self.assertEqual(result.source_evidence_card_ids, (int(card["id"]),))
+        self.assertEqual(len(result.replacement_evidence_card_ids), 1)
+        replacement = self.db.get_evidence_card(result.replacement_evidence_card_ids[0])
+        self.assertEqual(replacement["review_status"], "draft")
+        self.assertIn("根据被拒绝卡片的理由重新整理", replacement["source_locator"])
+        self.assertEqual(
+            generate_cards.call_args.kwargs["review_feedback"],
+            ["原卡混入了分析性表述，请只保留受访者的明确经历。"],
+        )
+        self.assertEqual(
+            list_regenerable_rejected_evidence_cards(self.db, self.project_id), ()
+        )
+
     def test_approving_evidence_refreshes_only_its_project_claims(self) -> None:
         stored = check_and_store_claim(self.db, self.project_id, SIMPLE_CLAIM)
         initial_tasks = self.db.list_followup_tasks(claim_id=stored.claim_id)
@@ -543,18 +633,21 @@ class WorkflowTestCase(unittest.TestCase):
             other.claim_id, "claim_retrieval"
         )
 
-        imported = import_text_material(
-            self.db,
-            self.project_id,
-            DIFFICULTY_TEXT,
-            original_filename="待批准材料.txt",
-            source_role="模拟受访者（虚构）",
-            context="虚构访谈",
-            captured_at="2026-07-15T09:10:00+08:00",
-            consent_status=ConsentStatus.CONFIRMED,
-            custom_sensitive_terms=None,
-            is_fictional=True,
-        )
+        with patch(
+            "qingji.workflow.llm_settings", SimpleNamespace(configured=True)
+        ):
+            imported = import_text_material(
+                self.db,
+                self.project_id,
+                DIFFICULTY_TEXT,
+                original_filename="待批准材料.txt",
+                source_role="模拟受访者（虚构）",
+                context="虚构访谈",
+                captured_at="2026-07-15T09:10:00+08:00",
+                consent_status=ConsentStatus.CONFIRMED,
+                custom_sensitive_terms=None,
+                is_fictional=True,
+            )
         card = self.db.get_evidence_card(imported.evidence_card_ids[0])
         review = review_evidence_card(
             self.db,
@@ -660,49 +753,60 @@ class WorkflowTestCase(unittest.TestCase):
         self.assertEqual(stored.evaluation.verdict, Verdict.UNSUPPORTED)
         self.assertEqual(stored.evaluation.supporting_evidence_ids, [])
 
-    def test_long_material_is_merged_into_bounded_review_cards(self) -> None:
+    def test_long_material_keeps_model_selected_source_boundaries(self) -> None:
         long_text = "".join(
             f"第{index}位受访者记录：使用线上平台时描述了办理流程和遇到的问题。"
             for index in range(1, 901)
         )
-        result = import_text_material(
-            self.db,
-            self.project_id,
-            long_text,
-            original_filename="长材料.txt",
-            source_role="受访者",
-            context="长材料测试",
-            captured_at="2026-08-24",
-            consent_status=ConsentStatus.CONFIRMED,
-            custom_sensitive_terms=None,
-            is_fictional=True,
-        )
+        with patch(
+            "qingji.workflow.llm_settings", SimpleNamespace(configured=True)
+        ):
+            result = import_text_material(
+                self.db,
+                self.project_id,
+                long_text,
+                original_filename="长材料.txt",
+                source_role="受访者",
+                context="长材料测试",
+                captured_at="2026-08-24",
+                consent_status=ConsentStatus.CONFIRMED,
+                custom_sensitive_terms=None,
+                is_fictional=True,
+            )
 
         segments = self.db.list_segments(result.material_id)
         self.assertGreater(len(segments), len(result.evidence_card_ids))
         self.assertLessEqual(len(result.evidence_card_ids), 40)
-        self.assertTrue(any("合并生成" in warning for warning in result.warnings))
+        self.assertTrue(any("由模型生成" in warning for warning in result.warnings))
         card_quotes = "\n".join(
             self.db.get_evidence_card(card_id)["quote"]
             for card_id in result.evidence_card_ids
         )
         self.assertIn("第1位受访者", card_quotes)
-        self.assertIn("第900位受访者", card_quotes)
+        self.assertTrue(
+            all(
+                self.db.get_evidence_card(card_id)["quote"].count("受访者记录") == 1
+                for card_id in result.evidence_card_ids
+            )
+        )
 
     def test_bulk_review_refreshes_project_claims_once_per_batch(self) -> None:
         stored = check_and_store_claim(self.db, self.project_id, SIMPLE_CLAIM)
-        imported = import_text_material(
-            self.db,
-            self.project_id,
-            DIFFICULTY_TEXT,
-            original_filename="批量审核材料.txt",
-            source_role="受访者",
-            context="批量审核测试",
-            captured_at="2026-08-24",
-            consent_status=ConsentStatus.CONFIRMED,
-            custom_sensitive_terms=None,
-            is_fictional=True,
-        )
+        with patch(
+            "qingji.workflow.llm_settings", SimpleNamespace(configured=True)
+        ):
+            imported = import_text_material(
+                self.db,
+                self.project_id,
+                DIFFICULTY_TEXT,
+                original_filename="批量审核材料.txt",
+                source_role="受访者",
+                context="批量审核测试",
+                captured_at="2026-08-24",
+                consent_status=ConsentStatus.CONFIRMED,
+                custom_sensitive_terms=None,
+                is_fictional=True,
+            )
         updates = [
             {
                 "evidence_card_id": card_id,
@@ -786,23 +890,28 @@ class WorkflowTestCase(unittest.TestCase):
         self.assertEqual(semantic_run["status"], "completed")
         self.assertEqual(semantic_run["output"]["model"], "test-model")
 
-    def test_confirmed_import_has_full_text_fallback_card(self) -> None:
+    def test_confirmed_import_uses_the_model_when_normal_splitting_fails(self) -> None:
         with patch("qingji.workflow.split_text", return_value=[]):
-            result = import_text_material(
-                self.db,
-                self.project_id,
-                "即使分段器异常，这份脱敏正文也应保留为可审核证据。",
-                original_filename="分段异常材料.txt",
-                source_role="受访者",
-                context="分段兜底测试",
-                captured_at="2026-08-24",
-                consent_status=ConsentStatus.CONFIRMED,
-                custom_sensitive_terms=None,
-                is_fictional=True,
-            )
+            with patch(
+                "qingji.workflow.llm_settings", SimpleNamespace(configured=True)
+            ):
+                result = import_text_material(
+                    self.db,
+                    self.project_id,
+                    "即使分段器异常，这份脱敏正文也应保留为可审核证据。",
+                    original_filename="分段异常材料.txt",
+                    source_role="受访者",
+                    context="分段兜底测试",
+                    captured_at="2026-08-24",
+                    consent_status=ConsentStatus.CONFIRMED,
+                    custom_sensitive_terms=None,
+                    is_fictional=True,
+                )
 
         self.assertEqual(len(result.evidence_card_ids), 1)
-        self.assertTrue(any("兜底卡" in warning for warning in result.warnings))
+        card = self.db.get_evidence_card(result.evidence_card_ids[0])
+        self.assertEqual(card["title"], "材料片段 1")
+        self.assertTrue(any("交由模型重新提取" in warning for warning in result.warnings))
 
 
 if __name__ == "__main__":

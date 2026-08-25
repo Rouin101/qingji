@@ -836,6 +836,7 @@ def build_evidence_card_generation_prompt(
     consent_status: Any = ConsentStatus.CONFIRMED.value,
     source_role: str = "",
     context: str = "",
+    review_feedback: Sequence[str] | None = None,
     max_cards: int = _SEMANTIC_CARD_MAX_CARDS,
     max_context_chars: int = 12000,
 ) -> tuple[str, tuple[int, ...]]:
@@ -856,6 +857,13 @@ def build_evidence_card_generation_prompt(
         "source_role": _clean_text(source_role, limit=100),
         "context": _clean_text(context, limit=200),
     }
+    feedback_items = tuple(
+        dict.fromkeys(
+            _clean_text(item, limit=300)
+            for item in (review_feedback or ())
+            if _clean_text(item, limit=300)
+        )
+    )[:_MAX_LIST_ITEMS]
     lines = [
         json.dumps(
             {
@@ -886,9 +894,15 @@ def build_evidence_card_generation_prompt(
         "title 不超过 80 字，summary 不超过 240 字，uncertainties 最多 8 条；"
         "还可以返回 uncertainties（数组）。\n\n"
         f"材料元数据：{json.dumps(source, ensure_ascii=False)}\n"
-        "材料片段（每行一个 JSON 对象）：\n"
-        + "\n".join(lines)
     )
+    if feedback_items:
+        prompt += (
+            "上一轮卡片被拒绝的原因如下。请据此避开分析结论、建议和来源边界说明；"
+            "只有原文包含可独立复核的明确事实时才生成卡，否则返回空 cards。\n"
+            + "\n".join(f"- {item}" for item in feedback_items)
+            + "\n\n"
+        )
+    prompt += "材料片段（每行一个 JSON 对象）：\n" + "\n".join(lines)
     return prompt[:max_context_chars], tuple(int(item["id"]) for item in normalized)
 
 
@@ -931,8 +945,8 @@ def _parse_evidence_card_generation(
             raise LLMResponseError("模型语义证据卡只能引用连续的相邻片段。")
         if used_ids.intersection(segment_ids):
             # A later card that overlaps an earlier valid one is safe to omit:
-            # preserving the earlier card maintains one-to-one provenance, and
-            # the workflow can locally cover any remaining unused segments.
+            # preserving the earlier card maintains one-to-one provenance.
+            # Unused segments are deliberately not turned into local cards.
             discarded_card_count += 1
             continue
 
@@ -969,6 +983,7 @@ def request_evidence_card_generation(
     consent_status: Any = ConsentStatus.CONFIRMED.value,
     source_role: str = "",
     context: str = "",
+    review_feedback: Sequence[str] | None = None,
     max_cards: int = _SEMANTIC_CARD_MAX_CARDS,
     config: LLMSettings | None = None,
     progress_callback: Callable[[int, int], None] | None = None,
@@ -1044,6 +1059,7 @@ def request_evidence_card_generation(
             consent_status=consent_status,
             source_role=source_role,
             context=context,
+            review_feedback=review_feedback,
             max_cards=batch_limit,
             max_context_chars=current.max_context_chars,
         )
