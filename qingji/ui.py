@@ -150,21 +150,21 @@ def configure_page(title: str, icon: str = "🌱") -> None:
             border-right: 1px solid var(--qj-line);
         }
         .qj-sidebar-project {
-            background: linear-gradient(135deg, var(--qj-primary) 0%, var(--qj-primary-strong) 100%);
-            border: 1px solid rgba(255,255,255,.18);
+            background: #e8defa;
+            border: 1px solid #e8defa;
             border-radius: .8rem;
-            box-shadow: 0 8px 20px rgba(85, 42, 130, .20);
-            color: #ffffff;
+            box-shadow: none;
+            color: var(--qj-ink);
             line-height: 1.5;
             margin: .75rem 0 .55rem;
             padding: .9rem 1rem;
         }
         .qj-sidebar-project strong {
-            color: #ffffff;
+            color: var(--qj-ink);
             font-size: 1.05rem;
         }
         .qj-sidebar-project p {
-            color: rgba(255,255,255,.88);
+            color: #3a2b5e;
             margin: .55rem 0 0;
         }
         h1, h2, h3 { color: var(--qj-ink); letter-spacing: -.02em; }
