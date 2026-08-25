@@ -17,6 +17,7 @@ import unittest
 
 _TEST_DATA_DIR = tempfile.mkdtemp(prefix="qingji_apptest_")
 os.environ["QINGJI_DATA_DIR"] = _TEST_DATA_DIR
+os.environ["QINGJI_LLM_ENABLED"] = "false"
 
 from streamlit.testing.v1 import AppTest  # noqa: E402
 from qingji.backup import inspect_project_backup  # noqa: E402
@@ -189,6 +190,34 @@ class AppPageSmokeTest(unittest.TestCase):
             {"批量材料A.txt", "批量材料B.md"},
         )
         self.assertTrue(any("已处理 2 个文件" in item.value for item in app.success))
+
+    def test_single_file_upload_is_locked_until_removed(self) -> None:
+        database = get_database()
+        project_id = database.create_project("单文件上传锁定页面检查")
+
+        app = AppTest.from_file("app.py", default_timeout=30)
+        app.run()
+        app.session_state["qingji_project_id"] = project_id
+        app.switch_page("pages/1_材料与证据.py")
+        app.run()
+
+        app.file_uploader(key="single_material_file").set_value(
+            ("锁定上传.txt", "受访者表示线上服务方便。".encode(), "text/plain")
+        )
+        app.run()
+
+        self.assertEqual(app.exception, [])
+        self.assertFalse(
+            any(
+                uploader.key == "single_material_file"
+                for uploader in app.file_uploader
+            )
+        )
+        self.assertTrue(any("已选择文件：锁定上传.txt" in item.value for item in app.caption))
+        self.assertEqual(
+            app.button(key="clear_single_material_file").label,
+            "移除当前文件并重新选择",
+        )
 
     def test_followup_task_can_be_completed_and_reopened(self) -> None:
         database = get_database()

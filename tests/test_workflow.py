@@ -49,8 +49,13 @@ class WorkflowTestCase(unittest.TestCase):
         self.db = Database(Path(self.temp_dir.name) / "test.db")
         self.db.initialize()
         self.project_id = self.db.create_project("数字便民服务体验调研", "项目材料整理")
+        self._llm_settings_patcher = patch(
+            "qingji.workflow.llm_settings", SimpleNamespace(configured=False)
+        )
+        self._llm_settings_patcher.start()
 
     def tearDown(self) -> None:
+        self._llm_settings_patcher.stop()
         self.temp_dir.cleanup()
 
     def _import(

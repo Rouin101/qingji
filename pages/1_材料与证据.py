@@ -167,18 +167,43 @@ with tab_import:
         "请如实填写来源、采集场景和授权状态；未确认授权的材料不会进入核验。"
     )
 
-    uploaded = st.file_uploader(
-        "上传文字文件（可选）",
-        type=["txt", "md", "docx", "pdf"],
-        help="文字、Word 和 PDF 文件会先在本地读取，不会自动发送到云端。扫描版 PDF 需要先转为可复制文字。",
-    )
+    upload_lock_key = "single_material_upload_lock"
+    uploader_widget_key = "single_material_file"
+    locked_upload = st.session_state.get(upload_lock_key)
+    uploaded_name = ""
+    uploaded_bytes = b""
+    if isinstance(locked_upload, dict):
+        uploaded_name = str(locked_upload.get("name") or "")
+        uploaded_bytes = locked_upload.get("content") or b""
+        if not isinstance(uploaded_bytes, bytes):
+            uploaded_bytes = b""
+        if uploaded_name and uploaded_bytes:
+            st.caption(f"已选择文件：{uploaded_name}。如需更换，请先移除当前文件。")
+            if st.button("移除当前文件并重新选择", key="clear_single_material_file"):
+                st.session_state.pop(upload_lock_key, None)
+                st.session_state.pop(uploader_widget_key, None)
+                st.rerun()
+        else:
+            st.session_state.pop(upload_lock_key, None)
+    if not uploaded_name:
+        selected_upload = st.file_uploader(
+            "上传文字文件（可选）",
+            type=["txt", "md", "docx", "pdf"],
+            key=uploader_widget_key,
+            help="文字、Word 和 PDF 文件会先在本地读取，不会自动发送到云端。扫描版 PDF 需要先转为可复制文字。",
+        )
+        if selected_upload is not None:
+            st.session_state[upload_lock_key] = {
+                "name": selected_upload.name,
+                "content": selected_upload.getvalue(),
+            }
+            st.rerun()
+
     uploaded_text = ""
     uploaded_error = ""
-    if uploaded is not None:
+    if uploaded_name:
         try:
-            uploaded_text = extract_uploaded_text(
-                uploaded.name, uploaded.getvalue()
-            )
+            uploaded_text = extract_uploaded_text(uploaded_name, uploaded_bytes)
         except DocumentImportError as exc:
             uploaded_error = str(exc)
             st.error(uploaded_error)
@@ -193,11 +218,11 @@ with tab_import:
         st.session_state.setdefault(key, default)
     uploaded_metadata_suggestion = infer_material_metadata(
         uploaded_text,
-        uploaded.name if uploaded is not None else "",
+        uploaded_name,
     )
     if uploaded_text and not uploaded_error:
         metadata_fingerprint = hashlib.sha256(
-            f"{uploaded.name}\n{uploaded_text}".encode("utf-8")
+            f"{uploaded_name}\n{uploaded_text}".encode("utf-8")
         ).hexdigest()
         if st.session_state.get("material_metadata_fingerprint") != metadata_fingerprint:
             st.session_state["material_metadata_fingerprint"] = metadata_fingerprint
@@ -253,8 +278,8 @@ with tab_import:
             filename = st.text_input(
                 "材料名称",
                 value=(
-                    uploaded.name
-                    if uploaded is not None
+                    uploaded_name
+                    if uploaded_name
                     else "手工录入_项目记录.txt"
                 ),
             )
@@ -639,6 +664,12 @@ with tab_review:
 
         if llm_settings.configured:
             st.divider()
+            llm_review_notice_key = f"llm_review_notice_{project_id}"
+            llm_review_notice = st.session_state.pop(llm_review_notice_key, None)
+            if llm_review_notice:
+                notice_level = llm_review_notice.get("level", "info")
+                notice_message = llm_review_notice.get("message", "")
+                getattr(st, notice_level, st.info)(notice_message)
             st.caption(
                 "模型只会读取再次脱敏后的已授权证据卡，并返回批准或拒绝建议。"
                 "勾选确认后，模型结果会直接写入审核状态。"
@@ -740,13 +771,25 @@ with tab_review:
                                 rejected_count += 1
                         for result in results:
                             rechecked_claim_ids.update(result.rechecked_claim_ids)
-                st.success(
+                completion_message = (
                     f"模型审核完成：批准 {approved_count} 张，"
                     f"拒绝 {rejected_count} 张，"
                     f"重新核验结论 {len(rechecked_claim_ids)} 条。"
                 )
                 if model_failures:
-                    st.error("以下卡片模型审核失败：" + "；".join(model_failures))
+                    st.session_state[llm_review_notice_key] = {
+                        "level": "error",
+                        "message": (
+                            completion_message
+                            + " 以下卡片未完成模型审核："
+                            + "；".join(model_failures)
+                        ),
+                    }
+                else:
+                    st.session_state[llm_review_notice_key] = {
+                        "level": "success",
+                        "message": completion_message,
+                    }
                 st.rerun()
         else:
             st.info(

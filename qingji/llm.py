@@ -475,6 +475,12 @@ def _extract_json_object(content: str) -> Mapping[str, Any]:
 def _string_list(value: Any, *, field: str) -> tuple[str, ...]:
     if value is None:
         return ()
+    # Some OpenAI-compatible providers return one uncertainty as a string even
+    # when the requested JSON schema says it should be an array.  The value is
+    # still safe and useful, so normalize it instead of rejecting the batch.
+    if isinstance(value, str):
+        text = _clean_text(value, limit=300)
+        return (text,) if text else ()
     if not isinstance(value, list):
         raise LLMResponseError(f"模型字段 {field} 必须是数组。")
     result: list[str] = []
