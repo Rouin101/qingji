@@ -30,6 +30,7 @@ from qingji.ui import (
 )
 from qingji.workflow import (
     import_text_material,
+    regenerate_rejected_evidence_card,
     review_evidence_card,
     review_evidence_cards,
 )
@@ -854,6 +855,63 @@ with tab_review:
             st.markdown(evidence_card_html(card), unsafe_allow_html=True)
             if card.get("consent_status") != "confirmed":
                 st.warning("来源材料尚未确认授权。即使批准，仍不会进入可引用证据集。")
+
+            review_events = db.list_evidence_review_events(
+                project_id, evidence_card_id=card_id, limit=100
+            )
+            rejection_event = next(
+                (
+                    event
+                    for event in review_events
+                    if (event.get("after") or {}).get("review_status") == "rejected"
+                ),
+                None,
+            )
+            if card.get("review_status") == "rejected":
+                rejection_reason = str(
+                    (rejection_event or {}).get("change_reason")
+                    or "未记录具体拒绝理由，请人工复核。"
+                )
+                st.error(f"拒绝理由：{rejection_reason}")
+                already_regenerated = any(
+                    str(event.get("change_reason") or "").startswith(
+                        "已根据拒绝理由生成替代卡"
+                    )
+                    for event in review_events
+                )
+                if llm_settings.configured and card.get("consent_status") == "confirmed":
+                    if already_regenerated:
+                        st.caption("已根据该拒绝理由生成替代卡，请审核新卡后再决定是否引用。")
+                    elif st.button(
+                        "根据拒绝理由重新生成待审核卡",
+                        key=f"regenerate_rejected_evidence_{project_id}_{card_id}",
+                    ):
+                        try:
+                            with st.spinner("正在根据拒绝理由重新生成证据卡……"):
+                                regenerated = regenerate_rejected_evidence_card(
+                                    db, card_id
+                                )
+                            db.create_agent_run(
+                                project_id,
+                                "llm_evidence_card_regeneration",
+                                input_data={
+                                    "source_evidence_id": card_id,
+                                    "rejection_reason": regenerated.rejection_reason,
+                                    "model": llm_settings.model,
+                                },
+                                output_data={
+                                    "replacement_evidence_id": regenerated.replacement_evidence_card_id
+                                },
+                            )
+                            st.success(
+                                f"已生成替代卡 E{regenerated.replacement_evidence_card_id}，"
+                                "它仍需重新审核。"
+                            )
+                            st.rerun()
+                        except LLMError as exc:
+                            st.error(f"重新生成失败：{exc}")
+                        except Exception as exc:
+                            st.error(f"无法重新生成替代卡：{exc}")
 
             evidence_advice_key = f"llm_evidence_advice_{project_id}_{card_id}"
             advice_data = st.session_state.get(evidence_advice_key)

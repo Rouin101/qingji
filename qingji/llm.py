@@ -696,6 +696,7 @@ def request_claim_assistance(
 def build_evidence_assistance_prompt(
     evidence_row: Mapping[str, Any],
     *,
+    review_feedback: str = "",
     max_context_chars: int = 12000,
 ) -> str:
     """Build a redacted prompt for a consent-confirmed evidence card."""
@@ -712,11 +713,13 @@ def build_evidence_assistance_prompt(
         "current_evidence_type": _clean_text(
             evidence_row.get("evidence_type"), limit=100
         ),
+        "review_feedback": _clean_text(review_feedback, limit=500),
     }
     prompt = (
         "你是青迹的证据卡草拟助手。请根据给定的脱敏片段，提出便于人工审核的"
         "标题、摘要和证据类型建议。不得补造人物、数字、时间、地点或因果关系；"
         "不得把单个来源推广为群体事实；团队分析只能标记为 team_analysis。"
+        "如提供了上一轮拒绝理由，必须针对该理由改正卡片边界或表述；"
         "这只是草稿，不代表证据已批准。只返回一个 JSON 对象，不要 Markdown 围栏。\n\n"
         "JSON 字段必须为：title（不超过 80 字）、summary（不超过 240 字）、"
         "evidence_type（只能是 interview_statement、staff_explanation、"
@@ -761,6 +764,7 @@ def _parse_evidence_advice(
 def request_evidence_assistance(
     evidence_row: Mapping[str, Any],
     *,
+    review_feedback: str = "",
     config: LLMSettings | None = None,
     post_json: Callable[
         [str, Mapping[str, str], Mapping[str, Any], float], Mapping[str, Any]
@@ -776,6 +780,7 @@ def request_evidence_assistance(
         )
     prompt = build_evidence_assistance_prompt(
         evidence_row,
+        review_feedback=review_feedback,
         max_context_chars=current.max_context_chars,
     )
     post = post_json or _default_post_json

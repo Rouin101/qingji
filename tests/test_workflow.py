@@ -16,6 +16,7 @@ from qingji.llm import (
     ClaimEvidenceReviewItem,
     EvidenceCardGenerationAdvice,
     EvidenceCardGenerationItem,
+    EvidenceAdvice,
 )
 from qingji.models import (
     ConsentStatus,
@@ -27,6 +28,7 @@ from qingji.workflow import (
     StoredClaimResult,
     check_and_store_claim,
     import_text_material,
+    regenerate_rejected_evidence_card,
     recheck_claim,
     review_evidence_card,
     review_evidence_cards,
@@ -439,6 +441,35 @@ class WorkflowTestCase(unittest.TestCase):
         self.assertIn("- 支持证据：无", markdown)
         self.assertIn("## 证据审核变更日志", markdown)
         self.assertIn("来源复核未通过，撤回证据。", markdown)
+
+    def test_rejected_evidence_can_generate_one_traceable_replacement(self) -> None:
+        imported = self._import(DIFFICULTY_TEXT)
+        card = self.db.get_evidence_card(imported.evidence_card_ids[0])
+        review_evidence_card(
+            self.db,
+            int(card["id"]),
+            title=card["title"],
+            summary=card["summary"],
+            evidence_type=card["evidence_type"],
+            review_status="rejected",
+            change_reason="原卡把个人经历概括得过宽。",
+        )
+        advice = EvidenceAdvice(
+            title="个体线上办理经历",
+            summary="一名受访者提到线上办理时需要志愿者帮助。",
+            evidence_type="interview_statement",
+            uncertainties=(),
+            model="test-model",
+        )
+        with patch("qingji.workflow.request_evidence_assistance", return_value=advice) as generate:
+            regenerated = regenerate_rejected_evidence_card(self.db, int(card["id"]))
+
+        replacement = self.db.get_evidence_card(regenerated.replacement_evidence_card_id)
+        self.assertEqual(replacement["review_status"], "draft")
+        self.assertIn(f"E{card['id']} 的拒绝理由重新生成", replacement["source_locator"])
+        self.assertEqual(generate.call_args.kwargs["review_feedback"], "原卡把个人经历概括得过宽。")
+        with self.assertRaises(ValueError):
+            regenerate_rejected_evidence_card(self.db, int(card["id"]))
 
     def test_approving_evidence_refreshes_only_its_project_claims(self) -> None:
         stored = check_and_store_claim(self.db, self.project_id, SIMPLE_CLAIM)

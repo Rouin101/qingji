@@ -31,6 +31,7 @@ from .evidence import generate_evidence_drafts, split_text
 from .llm import (
     LLMError,
     request_claim_evidence_review,
+    request_evidence_assistance,
     request_evidence_card_generation,
 )
 from .models import (
@@ -79,6 +80,13 @@ class EvidenceReviewResult:
     evidence_card: dict[str, Any]
     rechecked_claim_ids: tuple[int, ...]
     review_event_id: int | None
+
+
+@dataclass(frozen=True)
+class EvidenceRegenerationResult:
+    source_evidence_card_id: int
+    replacement_evidence_card_id: int
+    rejection_reason: str
 
 
 def _status_value(value: Any) -> str:
@@ -836,6 +844,66 @@ def review_evidence_card(
         evidence_card=updated,
         rechecked_claim_ids=tuple(rechecked_claim_ids),
         review_event_id=review_event_id,
+    )
+
+
+def regenerate_rejected_evidence_card(
+    db: Any, evidence_card_id: int
+) -> EvidenceRegenerationResult:
+    """Create one new draft from a rejected card and its recorded reason."""
+
+    current = db.get_evidence_card(int(evidence_card_id))
+    if current is None:
+        raise ValueError(f"证据 E{evidence_card_id} 不存在。")
+    if _status_value(current.get("review_status")) != ReviewStatus.REJECTED.value:
+        raise ValueError("只有已拒绝的证据卡可以根据审核理由重新生成。")
+    if _status_value(current.get("consent_status")) != ConsentStatus.CONFIRMED.value:
+        raise ValueError("未确认授权的证据卡不能请求模型重新生成。")
+
+    events = db.list_evidence_review_events(
+        int(current["project_id"]), evidence_card_id=int(evidence_card_id), limit=100
+    )
+    if any(str(event.get("change_reason") or "").startswith("已根据拒绝理由生成替代卡") for event in events):
+        raise ValueError("该拒绝卡已经生成过替代卡，请先审核替代卡。")
+    rejection_event = next(
+        (
+            event
+            for event in events
+            if (event.get("after") or {}).get("review_status")
+            == ReviewStatus.REJECTED.value
+        ),
+        None,
+    )
+    rejection_reason = str(
+        (rejection_event or {}).get("change_reason")
+        or "模型未提供具体拒绝理由，请收紧表述并保持原文边界。"
+    ).strip()
+    advice = request_evidence_assistance(
+        current, review_feedback=rejection_reason
+    )
+    replacement_id = db.create_evidence_card(
+        int(current["project_id"]),
+        int(current["segment_id"]),
+        advice.evidence_type,
+        advice.title,
+        str(current.get("quote") or "").strip(),
+        advice.summary,
+        source_locator=(
+            f"{str(current.get('source_locator') or '').strip()} · "
+            f"根据 E{evidence_card_id} 的拒绝理由重新生成"
+        ).strip(" ·"),
+        review_status=ReviewStatus.DRAFT.value,
+    )
+    db.create_evidence_review_event(
+        int(evidence_card_id),
+        before={"review_status": ReviewStatus.REJECTED.value},
+        after={"review_status": ReviewStatus.REJECTED.value},
+        change_reason=f"已根据拒绝理由生成替代卡 E{replacement_id}。",
+    )
+    return EvidenceRegenerationResult(
+        source_evidence_card_id=int(evidence_card_id),
+        replacement_evidence_card_id=replacement_id,
+        rejection_reason=rejection_reason,
     )
 
 
