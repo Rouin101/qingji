@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
 from urllib.error import HTTPError, URLError
@@ -43,6 +44,12 @@ class LLMRequestError(LLMError):
 
 class LLMResponseError(LLMError):
     """The provider response did not satisfy the safe JSON contract."""
+
+
+# Keep a small cap so independent long-material batches finish sooner without
+# overwhelming an OpenAI-compatible provider or making rate-limit failures
+# more likely.
+_SEMANTIC_CARD_MAX_PARALLEL_REQUESTS = 3
 
 
 @dataclass(frozen=True)
@@ -944,6 +951,7 @@ def request_evidence_card_generation(
     context: str = "",
     max_cards: int = _SEMANTIC_CARD_MAX_CARDS,
     config: LLMSettings | None = None,
+    progress_callback: Callable[[int, int], None] | None = None,
     post_json: Callable[
         [str, Mapping[str, str], Mapping[str, Any], float], Mapping[str, Any]
     ]
@@ -985,11 +993,10 @@ def request_evidence_card_generation(
         batches.append(current_batch)
 
     post = post_json or _default_post_json
-    all_cards: list[EvidenceCardGenerationItem] = []
-    all_uncertainties: list[str] = []
     remaining_cards = max_cards
-    remaining_batches = len(batches)
-    for batch in batches:
+    batch_specs: list[tuple[int, list[dict[str, Any]], int]] = []
+    for batch_index, batch in enumerate(batches):
+        remaining_batches = len(batches) - batch_index
         batch_limit = max(
             1,
             min(
@@ -997,6 +1004,16 @@ def request_evidence_card_generation(
                 (remaining_cards + remaining_batches - 1) // remaining_batches,
             ),
         )
+        # Reserve a bounded share for every batch.  This allows independent
+        # requests to run concurrently while never exceeding max_cards.
+        remaining_cards -= batch_limit
+        batch_specs.append((batch_index, batch, batch_limit))
+
+    def generate_batch(
+        batch_index: int,
+        batch: list[dict[str, Any]],
+        batch_limit: int,
+    ) -> tuple[int, tuple[EvidenceCardGenerationItem, ...], tuple[str, ...]]:
         prompt, allowed_ids = build_evidence_card_generation_prompt(
             batch,
             consent_status=consent_status,
@@ -1016,12 +1033,31 @@ def request_evidence_card_generation(
             max_cards=batch_limit,
             model=current.model,
         )
+        return batch_index, cards, uncertainties
+
+    completed_batches = 0
+    generated_by_batch: dict[
+        int, tuple[tuple[EvidenceCardGenerationItem, ...], tuple[str, ...]]
+    ] = {}
+    worker_count = min(_SEMANTIC_CARD_MAX_PARALLEL_REQUESTS, len(batch_specs))
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = [
+            executor.submit(generate_batch, batch_index, batch, batch_limit)
+            for batch_index, batch, batch_limit in batch_specs
+        ]
+        for future in as_completed(futures):
+            batch_index, cards, uncertainties = future.result()
+            generated_by_batch[batch_index] = (cards, uncertainties)
+            completed_batches += 1
+            if progress_callback is not None:
+                progress_callback(completed_batches, len(batch_specs))
+
+    all_cards: list[EvidenceCardGenerationItem] = []
+    all_uncertainties: list[str] = []
+    for batch_index in range(len(batch_specs)):
+        cards, uncertainties = generated_by_batch[batch_index]
         all_cards.extend(cards)
         all_uncertainties.extend(uncertainties)
-        remaining_cards -= len(cards)
-        remaining_batches -= 1
-        if remaining_cards <= 0:
-            break
 
     return EvidenceCardGenerationAdvice(
         cards=tuple(all_cards[:max_cards]),

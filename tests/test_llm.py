@@ -401,6 +401,45 @@ class LLMTests(unittest.TestCase):
                 post_json=fake_post,
             )
 
+    def test_semantic_card_generation_reports_progress_for_multiple_batches(self) -> None:
+        import re
+
+        completed: list[tuple[int, int]] = []
+
+        def fake_post(url, headers, payload, timeout):
+            prompt = payload["messages"][-1]["content"]
+            segment_id = int(re.search(r'"segment_id":(\d+)', prompt).group(1))
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                '{"cards":[{"segment_ids":['
+                                f"{segment_id}"
+                                '],"title":"标题","summary":"摘要",'
+                                '"evidence_type":"formal_record",'
+                                '"uncertainties":[]}],"uncertainties":[]}'
+                            )
+                        }
+                    }
+                ]
+            }
+
+        request_evidence_card_generation(
+            [
+                {"id": 1, "redacted_text": "甲" * 700},
+                {"id": 2, "redacted_text": "乙" * 700},
+                {"id": 3, "redacted_text": "丙" * 700},
+            ],
+            config=_config(max_context_chars=3000),
+            post_json=fake_post,
+            progress_callback=lambda completed_count, total: completed.append(
+                (completed_count, total)
+            ),
+        )
+
+        self.assertEqual(completed[-1], (2, 2))
+
     def test_evidence_review_prompt_is_redacted_and_requires_consent(self) -> None:
         with self.assertRaises(ValueError):
             build_evidence_review_prompt(

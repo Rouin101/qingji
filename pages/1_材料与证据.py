@@ -382,6 +382,11 @@ with tab_import:
                 if item.strip()
             ]
             try:
+                import_progress = st.empty()
+
+                def update_import_progress(message: str) -> None:
+                    import_progress.info(message)
+
                 with st.spinner("正在检查隐私并生成证据卡……"):
                     result = import_text_material(
                         db,
@@ -394,7 +399,9 @@ with tab_import:
                         consent_status=ConsentStatus(consent_choice),
                         custom_sensitive_terms=custom_terms,
                         is_fictional=is_fictional,
+                        progress_callback=update_import_progress,
                     )
+                import_progress.empty()
             except Exception as exc:
                 st.error(f"材料导入失败：{exc}")
             else:

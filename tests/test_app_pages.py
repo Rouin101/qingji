@@ -1,9 +1,8 @@
 """Streamlit AppTest smoke tests — every page must load without exceptions.
 
-The data directory is redirected to a temporary folder before any Qingji
-module is imported.  ``unittest discover`` loads this module first
-alphabetically, which lets the environment variable win for the whole process
-without touching the developer's real ``data/`` folder.
+The data directory is redirected to a temporary folder for the whole module.
+The explicit settings refresh also keeps this true when another test module
+has already imported Qingji before this one.
 
 Pages are visited through the real multi-page entry point so ``st.page_link``
 and ``st.switch_page`` resolve like they do inside the running app.
@@ -19,6 +18,12 @@ _TEST_DATA_DIR = tempfile.mkdtemp(prefix="qingji_apptest_")
 os.environ["QINGJI_DATA_DIR"] = _TEST_DATA_DIR
 os.environ["QINGJI_LLM_ENABLED"] = "false"
 
+import qingji.config as qingji_config  # noqa: E402
+import qingji.db as qingji_db  # noqa: E402
+
+qingji_config.settings = qingji_config.Settings.from_env()
+qingji_db.settings = qingji_config.settings
+
 from streamlit.testing.v1 import AppTest  # noqa: E402
 from qingji.backup import inspect_project_backup  # noqa: E402
 from qingji.diagnostics import RETRIEVAL_DIAGNOSTIC_VERSION  # noqa: E402
@@ -27,6 +32,8 @@ from qingji.workflow import (  # noqa: E402
     check_and_store_claim,
     import_text_material,
 )
+
+get_database.clear()
 
 PAGES = [
     "pages/1_材料与证据.py",

@@ -22,7 +22,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, Callable
 
 from .claims import evaluate_claim, validate_citation_ids
 from .config import llm_settings
@@ -57,6 +57,10 @@ _TASK_RECOMMENDATION = (
 _MAX_CLAIM_LENGTH = 500
 _MAX_EVIDENCE_CARDS_PER_MATERIAL = 40
 _EVIDENCE_CARD_TARGET_CHARS = 720
+_MODEL_INPUT_SEGMENT_THRESHOLD = 24
+_MODEL_INPUT_MAX_CANDIDATES = 24
+_MODEL_INPUT_TARGET_CHARS = 1200
+_MODEL_INPUT_PREVIEW_CHARS = 360
 
 
 @dataclass(frozen=True)
@@ -131,6 +135,56 @@ def _model_card_drafts(
     return drafts
 
 
+def _model_generation_candidates(
+    material_id: int,
+    segments: Sequence[Mapping[str, Any]],
+    source_role: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Prepare compact model inputs while keeping complete local quotes.
+
+    Long reports may contain hundreds of short persisted segments.  The model
+    sees a bounded preview of locally merged, traceable candidate blocks; the
+    returned ids are then resolved against the full local block so no raw text
+    is sent and the reviewer still receives the complete redacted quote.
+    """
+
+    if len(segments) <= _MODEL_INPUT_SEGMENT_THRESHOLD:
+        copied = [dict(segment) for segment in segments]
+        return copied, copied
+
+    local_drafts = generate_evidence_drafts(
+        material_id,
+        segments,
+        source_role,
+        max_cards=_MODEL_INPUT_MAX_CANDIDATES,
+        target_chars=_MODEL_INPUT_TARGET_CHARS,
+    )
+    model_segments: list[dict[str, Any]] = []
+    full_segments: list[dict[str, Any]] = []
+    for sequence_no, draft in enumerate(local_drafts, start=1):
+        full_quote = draft.quote.strip()
+        preview = full_quote[:_MODEL_INPUT_PREVIEW_CHARS].rstrip()
+        if len(full_quote) > _MODEL_INPUT_PREVIEW_CHARS:
+            preview += "…"
+        model_segments.append(
+            {
+                "id": draft.segment_id,
+                "sequence_no": sequence_no,
+                "locator": draft.source_locator,
+                "redacted_text": f"摘要：{draft.summary}\n原文预览：{preview}",
+            }
+        )
+        full_segments.append(
+            {
+                "id": draft.segment_id,
+                "sequence_no": sequence_no,
+                "locator": draft.source_locator,
+                "redacted_text": full_quote,
+            }
+        )
+    return model_segments, full_segments
+
+
 def _storage_dirs(db: Any) -> tuple[Path, Path]:
     db_dir = Path(getattr(db, "path", Path("data"))).resolve().parent
     return db_dir / "raw", db_dir / "redacted"
@@ -148,6 +202,7 @@ def import_text_material(
     consent_status: str | ConsentStatus,
     custom_sensitive_terms: list[str] | None,
     is_fictional: bool,
+    progress_callback: Callable[[str], None] | None = None,
 ) -> MaterialImportResult:
     """Persist one text material and draft evidence cards when authorized.
 
@@ -165,6 +220,9 @@ def import_text_material(
     consent = _status_value(consent_status)
     if consent not in {item.value for item in ConsentStatus}:
         raise ValueError(f"未知的授权状态：{consent!r}")
+
+    if progress_callback is not None:
+        progress_callback("正在本地检查隐私信息……")
 
     raw_dir, redacted_dir = _storage_dirs(db)
     raw_dir.mkdir(parents=True, exist_ok=True)
@@ -246,14 +304,26 @@ def import_text_material(
         used_semantic_cards = False
         if llm_settings.configured:
             try:
+                if progress_callback is not None:
+                    progress_callback("隐私检查已完成，正在整理脱敏材料并生成证据卡……")
+                model_segments, full_card_segments = _model_generation_candidates(
+                    material_id, segments, source_role
+                )
                 advice = request_evidence_card_generation(
-                    segments,
+                    model_segments,
                     consent_status=consent,
                     source_role=source_role,
                     context=context,
                     max_cards=_MAX_EVIDENCE_CARDS_PER_MATERIAL,
+                    progress_callback=(
+                        lambda completed, total: progress_callback(
+                            f"已完成脱敏，正在生成证据卡（第 {completed}/{total} 批）。"
+                        )
+                        if progress_callback is not None
+                        else None
+                    ),
                 )
-                drafts = _model_card_drafts(material_id, segments, advice)
+                drafts = _model_card_drafts(material_id, full_card_segments, advice)
                 used_semantic_cards = bool(drafts)
                 db.create_agent_run(
                     project_id,
@@ -285,6 +355,8 @@ def import_text_material(
                 )
 
         if drafts is None or not drafts:
+            if progress_callback is not None:
+                progress_callback("正在本地合并并生成可审核证据卡……")
             drafts = generate_evidence_drafts(
                 material_id,
                 segments,

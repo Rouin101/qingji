@@ -180,6 +180,43 @@ class WorkflowTestCase(unittest.TestCase):
             "completed",
         )
 
+    def test_long_import_compacts_model_card_candidates(self) -> None:
+        advice = EvidenceCardGenerationAdvice(
+            cards=(),
+            uncertainties=(),
+            model="test-model",
+            chunk_count=1,
+        )
+        long_text = "\n\n".join(
+            f"第{index}条记录：" + "用于验证长材料候选块合并。" * 25
+            for index in range(32)
+        )
+
+        with patch(
+            "qingji.workflow.llm_settings",
+            SimpleNamespace(configured=True),
+        ), patch(
+            "qingji.workflow.request_evidence_card_generation",
+            return_value=advice,
+        ) as generate_cards:
+            result = import_text_material(
+                self.db,
+                self.project_id,
+                long_text,
+                original_filename="长材料候选块测试.txt",
+                source_role="正式记录",
+                context="长材料测试场景",
+                captured_at="2026-08-25",
+                consent_status=ConsentStatus.CONFIRMED,
+                custom_sensitive_terms=None,
+                is_fictional=False,
+            )
+
+        model_candidates = generate_cards.call_args.args[0]
+        self.assertLessEqual(len(model_candidates), 24)
+        self.assertLess(len(model_candidates), len(self.db.list_segments(result.material_id)))
+        self.assertTrue(result.evidence_card_ids)
+
     def test_unauthorized_material_has_no_cards_and_is_not_citable(self) -> None:
         result = self._import(DIFFICULTY_TEXT, consent="unknown")
 
