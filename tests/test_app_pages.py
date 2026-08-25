@@ -221,6 +221,37 @@ class AppPageSmokeTest(unittest.TestCase):
             any(item.key == "clear_single_material_file" for item in app.button)
         )
 
+    def test_switching_project_resets_material_import_draft_and_upload_lock(self) -> None:
+        database = get_database()
+        first_project_id = database.create_project("材料导入状态项目甲")
+        second_project_id = database.create_project("材料导入状态项目乙")
+
+        app = AppTest.from_file("app.py", default_timeout=30)
+        app.run()
+        app.session_state["qingji_project_id"] = first_project_id
+        app.switch_page("pages/1_材料与证据.py")
+        app.run()
+
+        app.file_uploader(key="single_material_file").set_value(
+            ("项目甲材料.txt", "项目甲的正文不应留到项目乙。".encode(), "text/plain")
+        )
+        app.run()
+        self.assertTrue(app.file_uploader(key="single_material_file").disabled)
+        self.assertIn("项目甲的正文", app.text_area(key="material_draft_text").value)
+
+        app.session_state["qingji_project_id"] = second_project_id
+        app.run()
+
+        self.assertEqual(app.exception, [])
+        uploader = app.file_uploader(key="single_material_file")
+        self.assertFalse(uploader.disabled)
+        self.assertIsNone(uploader.value)
+        self.assertEqual(app.text_area(key="material_draft_text").value, "")
+        self.assertEqual(
+            app.text_input(key="material_filename").value,
+            "手工录入_项目记录.txt",
+        )
+
     def test_followup_task_can_be_completed_and_reopened(self) -> None:
         database = get_database()
         project_id = database.create_project("补证任务页面检查")

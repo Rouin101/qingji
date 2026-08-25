@@ -52,6 +52,37 @@ _SOURCE_ROLE_OPTIONS = [
 ]
 _SINGLE_SOURCE_ROLE_OPTIONS = ["请选择", *_SOURCE_ROLE_OPTIONS]
 
+_MATERIAL_IMPORT_PROJECT_KEY = "material_import_project_id"
+_MATERIAL_IMPORT_STATE_DEFAULTS = {
+    "material_draft_text": "",
+    "material_filename": "手工录入_项目记录.txt",
+    "material_source_role": "请选择",
+    "material_context": "",
+    "material_captured_at": None,
+    "material_consent_choice": "confirmed",
+    "material_custom_terms": "",
+    "material_confirmed": False,
+}
+_MATERIAL_IMPORT_RESET_KEYS = (
+    "single_material_upload_lock",
+    "single_material_file",
+    "material_metadata_fingerprint",
+    "material_metadata_notice",
+    *_MATERIAL_IMPORT_STATE_DEFAULTS,
+)
+
+
+def reset_material_import_state_for_project(project_id: int) -> None:
+    """Keep the unfinished import form scoped to the current project."""
+
+    previous_project_id = st.session_state.get(_MATERIAL_IMPORT_PROJECT_KEY)
+    if previous_project_id is not None and previous_project_id != project_id:
+        for key in _MATERIAL_IMPORT_RESET_KEYS:
+            st.session_state.pop(key, None)
+    st.session_state[_MATERIAL_IMPORT_PROJECT_KEY] = project_id
+    for key, default in _MATERIAL_IMPORT_STATE_DEFAULTS.items():
+        st.session_state.setdefault(key, default)
+
 
 def render_review_history(db, project_id: int, evidence_card_id: int) -> None:
     """Render the append-only human review history for one evidence card."""
@@ -162,6 +193,7 @@ tab_import, tab_review, tab_materials = st.tabs(
 )
 
 with tab_import:
+    reset_material_import_state_for_project(project_id)
     st.markdown("### 导入新的文字材料")
     st.caption(
         "可粘贴文字，或上传 UTF-8 编码的 .txt/.md、未加密的 Word .docx 和可提取文本的 .pdf 文件。"
@@ -205,12 +237,6 @@ with tab_import:
 
     # Prefer explicit local extraction for uploaded files.  A new file resets
     # only the metadata fields so a previous material's values are not reused.
-    for key, default in (
-        ("material_source_role", "请选择"),
-        ("material_context", ""),
-        ("material_captured_at", None),
-    ):
-        st.session_state.setdefault(key, default)
     uploaded_metadata_suggestion = infer_material_metadata(
         uploaded_text,
         uploaded_name,
@@ -221,6 +247,8 @@ with tab_import:
         ).hexdigest()
         if st.session_state.get("material_metadata_fingerprint") != metadata_fingerprint:
             st.session_state["material_metadata_fingerprint"] = metadata_fingerprint
+            st.session_state["material_draft_text"] = uploaded_text
+            st.session_state["material_filename"] = uploaded_name
             st.session_state["material_source_role"] = (
                 uploaded_metadata_suggestion.source_role or "请选择"
             )
@@ -256,13 +284,10 @@ with tab_import:
     # visible until the user intentionally replaces them.
     with st.form("material_import_form", clear_on_submit=False):
         is_fictional = False
-        initial_text = uploaded_text or st.session_state.get(
-            "material_draft_text", ""
-        )
         text = st.text_area(
             "材料正文",
-            value=initial_text,
             height=220,
+            key="material_draft_text",
             placeholder=(
                 "例如：受访者D表示，第一次进入平台时没有找到"
                 "验证码输入位置，经志愿者提示后完成了操作……"
@@ -272,11 +297,7 @@ with tab_import:
         with metadata_left:
             filename = st.text_input(
                 "材料名称",
-                value=(
-                    uploaded_name
-                    if uploaded_name
-                    else "手工录入_项目记录.txt"
-                ),
+                key="material_filename",
             )
             source_role = st.selectbox(
                 "来源角色",
@@ -293,7 +314,6 @@ with tab_import:
         with metadata_right:
             context = st.text_input(
                 "采集场景",
-                value=st.session_state.get("material_context", ""),
                 key="material_context",
                 placeholder="说明材料获取的时间、地点或活动场景",
             )
@@ -308,13 +328,14 @@ with tab_import:
             )
             custom_terms_text = st.text_input(
                 "自定义敏感词（可选）",
+                key="material_custom_terms",
                 placeholder="用逗号分隔，例如：姓名, 详细地址",
                 help="适合标记姓名、精确住址或本项目特有身份信息。",
             )
 
         material_confirmed = st.checkbox(
             "我确认已如实填写来源和授权状态，并会在引用或导出前复核脱敏文本。",
-            value=False,
+            key="material_confirmed",
         )
         submitted = st.form_submit_button(
             "本地检查并生成证据卡",
