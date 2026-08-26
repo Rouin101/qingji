@@ -17,6 +17,7 @@ underlying database state directly.
 
 from __future__ import annotations
 
+from datetime import date
 import os
 import sys
 import tempfile
@@ -99,6 +100,7 @@ def step_import_and_approve(app: AppTest) -> None:
     app.text_input[1].set_value("线上便民服务体验访谈")
     app.text_input[2].set_value("受访者甲")
     app.radio[0].set_value("confirmed")
+    app.date_input[0].set_value(date(2026, 8, 25))
     app.checkbox[0].set_value(True)
     app.button[0].click()
     app.run()

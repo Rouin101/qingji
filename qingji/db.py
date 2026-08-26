@@ -88,6 +88,12 @@ class Database:
         "checked_at",
         "updated_at",
     }
+    CLAIM_CANDIDATE_FIELDS = {
+        "status",
+        "claim_id",
+        "checked_at",
+        "updated_at",
+    }
     TASK_FIELDS = {
         "title",
         "recommended_action",
@@ -251,6 +257,24 @@ class Database:
         CREATE INDEX IF NOT EXISTS idx_claims_project
             ON claims(project_id);
 
+        CREATE TABLE IF NOT EXISTS claim_candidates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            material_id INTEGER NOT NULL REFERENCES materials(id) ON DELETE CASCADE,
+            claim_text TEXT NOT NULL,
+            source_segment_ids_json TEXT NOT NULL DEFAULT '[]',
+            model TEXT NOT NULL DEFAULT '',
+            uncertainties_json TEXT NOT NULL DEFAULT '[]',
+            status TEXT NOT NULL DEFAULT 'draft'
+                CHECK (status IN ('draft', 'checked')),
+            claim_id INTEGER REFERENCES claims(id) ON DELETE SET NULL,
+            checked_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_claim_candidates_project_status
+            ON claim_candidates(project_id, status, id DESC);
+
         CREATE TABLE IF NOT EXISTS claim_evidence_links (
             claim_id INTEGER NOT NULL
                 REFERENCES claims(id) ON DELETE CASCADE,
@@ -402,6 +426,8 @@ class Database:
             ("before_json", "before"),
             ("after_json", "after"),
             ("rechecked_claim_ids_json", "rechecked_claim_ids"),
+            ("source_segment_ids_json", "source_segment_ids"),
+            ("uncertainties_json", "uncertainties"),
         ):
             if json_field in result:
                 try:
@@ -1068,6 +1094,104 @@ class Database:
         return self._delete("claims", claim_id)
 
     # Claim/evidence links
+    # Model-generated claim candidates remain drafts until separately checked.
+    def create_claim_candidate(
+        self,
+        project_id: int,
+        material_id: int,
+        claim_text: str,
+        *,
+        source_segment_ids: Sequence[int],
+        model: str = "",
+        uncertainties: Sequence[str] | None = None,
+    ) -> int:
+        normalized_text = str(claim_text or "").strip()
+        if not normalized_text:
+            raise ValueError("候选结论不能为空")
+        segment_ids = list(dict.fromkeys(int(item) for item in source_segment_ids))
+        if not segment_ids:
+            raise ValueError("候选结论必须保留来源片段")
+        now = _utc_now()
+        with self.connect() as connection:
+            material = connection.execute(
+                "SELECT project_id FROM materials WHERE id = ?", (material_id,)
+            ).fetchone()
+            if material is None or int(material["project_id"]) != int(project_id):
+                raise ValueError("候选结论与材料必须属于同一项目")
+            placeholders = ",".join("?" for _ in segment_ids)
+            matched = connection.execute(
+                "SELECT COUNT(*) FROM segments WHERE material_id = ? "
+                f"AND id IN ({placeholders})",
+                (material_id, *segment_ids),
+            ).fetchone()[0]
+            if int(matched) != len(segment_ids):
+                raise ValueError("候选结论的来源片段不属于该材料")
+            cursor = connection.execute(
+                """
+                INSERT INTO claim_candidates(
+                    project_id, material_id, claim_text,
+                    source_segment_ids_json, model, uncertainties_json,
+                    status, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?)
+                """,
+                (
+                    project_id,
+                    material_id,
+                    normalized_text,
+                    _json(segment_ids, []),
+                    str(model or ""),
+                    _json(uncertainties, []),
+                    now,
+                    now,
+                ),
+            )
+        return int(cursor.lastrowid)
+
+    def list_claim_candidates(
+        self, project_id: int, *, status: str | None = None
+    ) -> list[dict[str, Any]]:
+        clauses = ["cc.project_id = ?"]
+        params: list[Any] = [project_id]
+        if status is not None:
+            clauses.append("cc.status = ?")
+            params.append(_value(status))
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT cc.*, m.original_filename, m.source_role, m.context
+                FROM claim_candidates cc
+                JOIN materials m ON m.id = cc.material_id
+                WHERE """
+                + " AND ".join(clauses)
+                + " ORDER BY cc.created_at DESC, cc.id DESC",
+                params,
+            ).fetchall()
+        return self._rows(rows)
+
+    def mark_claim_candidate_checked(
+        self, candidate_id: int, claim_id: int
+    ) -> dict[str, Any] | None:
+        now = _utc_now()
+        with self.connect() as connection:
+            candidate = connection.execute(
+                "SELECT project_id FROM claim_candidates WHERE id = ?", (candidate_id,)
+            ).fetchone()
+            claim = connection.execute(
+                "SELECT project_id FROM claims WHERE id = ?", (claim_id,)
+            ).fetchone()
+            if candidate is None or claim is None:
+                raise ValueError("候选结论或核验结论不存在")
+            if int(candidate["project_id"]) != int(claim["project_id"]):
+                raise ValueError("候选结论和核验结论必须属于同一项目")
+            connection.execute(
+                """
+                UPDATE claim_candidates
+                SET status = 'checked', claim_id = ?, checked_at = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (claim_id, now, now, candidate_id),
+            )
+        return self._get("claim_candidates", candidate_id)
     def link_claim_evidence(
         self,
         claim_id: int,

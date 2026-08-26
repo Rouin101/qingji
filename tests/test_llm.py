@@ -10,6 +10,7 @@ from qingji.llm import (
     LLMResponseError,
     build_claim_assistance_prompt,
     build_claim_candidate_prompt,
+    build_material_claim_candidate_prompt,
     build_claim_evidence_review_prompt,
     build_evidence_assistance_prompt,
     build_evidence_card_generation_prompt,
@@ -18,6 +19,7 @@ from qingji.llm import (
     probe_llm_connection,
     request_claim_evidence_review,
     request_claim_candidates,
+    request_material_claim_candidates,
     request_evidence_review_batch,
     request_evidence_review,
     request_evidence_card_generation,
@@ -100,6 +102,48 @@ class LLMTests(unittest.TestCase):
         self.assertNotIn("13812345678", str(captured["payload"]))
         self.assertNotIn('"evidence_id":2', str(captured["payload"]))
 
+    def test_material_candidates_are_redacted_and_segment_traceable(self) -> None:
+        captured: dict[str, object] = {}
+
+        def fake_post(url, headers, payload, timeout):
+            captured["payload"] = payload
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                '{"candidates":[{"claim_text":"受访者认为线下协助更安心。",'
+                                '"segment_ids":[7]}],"uncertainties":[]}'
+                            )
+                        }
+                    }
+                ]
+            }
+
+        segments = [
+            {
+                "id": 7,
+                "redacted_text": "受访者联系 test@example.com 后表示线下协助更安心。",
+                "locator": "第2段",
+            }
+        ]
+        prompt, allowed = build_material_claim_candidate_prompt(
+            segments,
+            source_role="受访者",
+            context="社会实践总结",
+        )
+        advice = request_material_claim_candidates(
+            segments,
+            source_role="受访者",
+            context="社会实践总结",
+            config=_config(),
+            post_json=fake_post,
+        )
+
+        self.assertEqual(allowed, {7})
+        self.assertIn("必须排除政策、新闻、活动流程", prompt)
+        self.assertNotIn("test@example.com", str(captured["payload"]))
+        self.assertEqual(advice.candidates[0].segment_ids, (7,))
     def test_claim_candidate_prompt_keeps_only_subjective_judgment_sources(self) -> None:
         prompt, allowed = build_claim_candidate_prompt(
             [

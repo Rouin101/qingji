@@ -460,7 +460,7 @@ class AppPageSmokeTest(unittest.TestCase):
     def test_claim_page_shows_model_candidate_and_bulk_recheck_actions(self) -> None:
         database = get_database()
         project_id = database.create_project("结论候选页面检查")
-        _import_model_generated_material(
+        imported = _import_model_generated_material(
             database,
             project_id,
             "受访者表示线上办理时需要人工帮助。",
@@ -474,6 +474,13 @@ class AppPageSmokeTest(unittest.TestCase):
         )
         card = database.list_evidence_cards(project_id)[0]
         database.set_evidence_review_status(int(card["id"]), "approved")
+        database.create_claim_candidate(
+            project_id,
+            imported.material_id,
+            "有受访者表示线上办理时需要人工帮助。",
+            source_segment_ids=[int(card["segment_id"])],
+            model="test-model",
+        )
         claim_id = database.create_claim(
             project_id,
             "有受访者表示线上办理时需要人工帮助。",
@@ -499,7 +506,7 @@ class AppPageSmokeTest(unittest.TestCase):
         self.assertEqual(app.exception, [])
         self.assertTrue(
             any(
-                item.key == f"extract_claim_candidates_{project_id}"
+                item.label.startswith("一键核验全部待选结论")
                 for item in app.button
             )
         )

@@ -234,6 +234,21 @@ class ClaimCandidateAdvice:
 
 
 _MAX_CLAIM_CHARS = 500
+@dataclass(frozen=True)
+class MaterialClaimCandidateItem:
+    """One selectable subjective finding anchored to redacted segments."""
+
+    claim_text: str
+    segment_ids: tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class MaterialClaimCandidateAdvice:
+    """Draft findings extracted at import time; never a verdict or citation."""
+
+    candidates: tuple[MaterialClaimCandidateItem, ...]
+    uncertainties: tuple[str, ...]
+    model: str
 _MAX_FIELD_CHARS = 1200
 _MAX_LIST_ITEMS = 8
 _CLAIM_EVIDENCE_REVIEW_MAX_CARDS = 24
@@ -516,6 +531,59 @@ def build_claim_candidate_prompt(
     return prompt, allowed_ids
 
 
+def build_material_claim_candidate_prompt(
+    segment_rows: Sequence[Mapping[str, Any]],
+    *,
+    source_role: str,
+    context: str,
+    max_candidates: int = 12,
+    max_context_chars: int = 12000,
+) -> tuple[str, set[int]]:
+    """Build an import-time prompt from confirmed, locally redacted segments."""
+
+    if isinstance(max_candidates, bool) or not isinstance(max_candidates, int) or max_candidates <= 0:
+        raise ValueError("max_candidates must be a positive integer")
+    lines: list[str] = []
+    allowed_ids: set[int] = set()
+    used_chars = 0
+    context_limit = max(800, max_context_chars - 1600)
+    for row in segment_rows:
+        try:
+            segment_id = int(row["id"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        text = _clean_text(row.get("redacted_text"), limit=_MAX_FIELD_CHARS)
+        if not text:
+            continue
+        item = {
+            "segment_id": segment_id,
+            "text": text,
+            "locator": _clean_text(row.get("locator"), limit=200),
+            "source_role": _clean_text(source_role, limit=100),
+            "context": _clean_text(context, limit=200),
+        }
+        line = json.dumps(item, ensure_ascii=False, separators=(",", ":"))
+        if lines and used_chars + len(line) + 1 > context_limit:
+            break
+        lines.append(line)
+        allowed_ids.add(segment_id)
+        used_chars += len(line) + 1
+    material_context = "\n".join(lines) or "（没有可供提取的脱敏材料片段）"
+    prompt = (
+        "你是青迹的调研结论候选提取助手，不是事实裁判。请从给定的、已确认授权且"
+        "已经脱敏的社会实践材料片段中，只提取受访者感受、判断、比较、工作人员说明、"
+        "现场观察或团队分析中已经表达的主观发现。候选仅是草稿，须在证据卡审核后由"
+        "系统重新核验，不能直接写入实践成果。不得补造人物、数量、时间、地点、因果"
+        "或范围；必须排除政策、新闻、活动流程、实践背景、目的、计划、客观介绍、"
+        "数据罗列和纯客观事实。若没有合格的主观发现，返回空数组。只返回一个 JSON 对象，"
+        "不要 Markdown 代码围栏。\n\n"
+        "JSON 字段必须为：candidates（数组，每项包含 claim_text、segment_ids；"
+        f"最多 {max_candidates} 项；segment_ids 至少一个且只能使用给定 segment_id 的整数）、"
+        "uncertainties（最多 8 条）。claim_text 不超过 300 字，且必须由所列片段直接复核。\n\n"
+        "材料片段（每行一个 JSON 对象）：\n"
+        f"{material_context}"
+    )
+    return prompt, allowed_ids
 def _default_post_json(
     url: str,
     headers: Mapping[str, str],
@@ -787,6 +855,53 @@ def _parse_claim_candidates(
     )
 
 
+def _parse_material_claim_candidates(
+    response: Mapping[str, Any],
+    *,
+    allowed_ids: set[int],
+    max_candidates: int,
+    model: str,
+) -> MaterialClaimCandidateAdvice:
+    data = _extract_json_object(_response_content(response))
+    raw_candidates = data.get("candidates")
+    if not isinstance(raw_candidates, list):
+        raise LLMResponseError("模型字段 candidates 必须是数组。")
+    parsed: list[MaterialClaimCandidateItem] = []
+    seen_texts: set[str] = set()
+    for raw_item in raw_candidates[:max_candidates]:
+        if not isinstance(raw_item, Mapping):
+            raise LLMResponseError("模型结论候选项格式不正确。")
+        claim_text = _clean_text(raw_item.get("claim_text"), limit=300)
+        raw_ids = raw_item.get("segment_ids")
+        if not claim_text or not isinstance(raw_ids, list) or not raw_ids:
+            raise LLMResponseError("模型结论候选必须包含 claim_text 和 segment_ids。")
+        segment_ids: list[int] = []
+        for raw_id in raw_ids[:20]:
+            try:
+                segment_id = int(raw_id)
+            except (TypeError, ValueError) as exc:
+                raise LLMResponseError("模型候选引用了非整数片段编号。") from exc
+            if segment_id not in allowed_ids:
+                raise LLMResponseError(
+                    f"模型候选引用了本次上下文之外的片段 S{segment_id}。"
+                )
+            if segment_id not in segment_ids:
+                segment_ids.append(segment_id)
+        normalized = claim_text.rstrip("。！？!?；; ").replace(" ", "")
+        if not normalized or normalized in seen_texts:
+            continue
+        seen_texts.add(normalized)
+        parsed.append(
+            MaterialClaimCandidateItem(
+                claim_text=claim_text,
+                segment_ids=tuple(segment_ids),
+            )
+        )
+    return MaterialClaimCandidateAdvice(
+        candidates=tuple(parsed),
+        uncertainties=_string_list(data.get("uncertainties"), field="uncertainties"),
+        model=model,
+    )
 def request_claim_evidence_review(
     claim_text: str,
     evidence_rows: Sequence[Mapping[str, Any]],
@@ -916,6 +1031,46 @@ def request_claim_candidates(
     )
 
 
+def request_material_claim_candidates(
+    segment_rows: Sequence[Mapping[str, Any]],
+    *,
+    source_role: str,
+    context: str,
+    max_candidates: int = 12,
+    config: LLMSettings | None = None,
+    post_json: Callable[
+        [str, Mapping[str, str], Mapping[str, Any], float], Mapping[str, Any]
+    ]
+    | None = None,
+) -> MaterialClaimCandidateAdvice:
+    """Extract draft subjective findings immediately after material import."""
+
+    current = config or llm_settings
+    if not current.configured:
+        raise LLMConfigurationError(
+            "尚未启用大模型结论候选提取。请配置 QINGJI_LLM_ENABLED、"
+            "QINGJI_LLM_API_KEY 和 QINGJI_LLM_MODEL。"
+        )
+    prompt, allowed_ids = build_material_claim_candidate_prompt(
+        segment_rows,
+        source_role=source_role,
+        context=context,
+        max_candidates=max_candidates,
+        max_context_chars=current.max_context_chars,
+    )
+    if not allowed_ids:
+        raise LLMResponseError("当前材料没有可供提取的脱敏文本片段。")
+    response = _call_chat_completion(
+        prompt,
+        config=current,
+        post_json=post_json or _default_post_json,
+    )
+    return _parse_material_claim_candidates(
+        response,
+        allowed_ids=allowed_ids,
+        max_candidates=max_candidates,
+        model=current.model,
+    )
 def request_claim_assistance(
     claim_text: str,
     evaluation: ClaimEvaluation | Mapping[str, Any],

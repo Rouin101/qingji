@@ -37,6 +37,7 @@ _TABLES = (
     "evidence_review_events",
     "claims",
     "claim_evidence_links",
+    "claim_candidates",
     "followup_tasks",
     "agent_runs",
 )
@@ -185,6 +186,11 @@ def export_project_backup(db: Any, project_id: int) -> ProjectBackup:
                 "SELECT * FROM claims WHERE project_id=? ORDER BY id",
                 (int(project_id),),
             ),
+            "claim_candidates": _rows(
+                connection,
+                "SELECT * FROM claim_candidates WHERE project_id=? ORDER BY id",
+                (int(project_id),),
+            ),
             "claim_evidence_links": _rows(
                 connection,
                 "SELECT l.* FROM claim_evidence_links l "
@@ -321,6 +327,7 @@ def _validate_source_relations(payload: Mapping[str, Any]) -> None:
     evidence_ids = _unique_ids(tables["evidence_cards"], "evidence_cards")
     claim_ids = _unique_ids(tables["claims"], "claims")
     _unique_ids(tables["followup_tasks"], "followup_tasks")
+    _unique_ids(tables["claim_candidates"], "claim_candidates")
     _unique_ids(tables["agent_runs"], "agent_runs")
     project_tables = (
         "materials",
@@ -328,6 +335,7 @@ def _validate_source_relations(payload: Mapping[str, Any]) -> None:
         "evidence_review_events",
         "claims",
         "agent_runs",
+        "claim_candidates",
     )
     for table in project_tables:
         if any(
@@ -348,6 +356,20 @@ def _validate_source_relations(payload: Mapping[str, Any]) -> None:
     for row in tables["claims"]:
         _json_field(row, "missing_evidence_json", list)
         _json_field(row, "rule_flags_json", list)
+    for row in tables["claim_candidates"]:
+        if _positive_int(row.get("material_id"), "材料") not in material_ids:
+            raise ValueError("备份包中的候选结论材料引用无效。")
+        source_ids = _json_field(row, "source_segment_ids_json", list)
+        if not source_ids or any(
+            _positive_int(item, "片段") not in segment_ids for item in source_ids
+        ):
+            raise ValueError("备份包中的候选结论来源片段无效。")
+        _json_field(row, "uncertainties_json", list)
+        if row.get("status") not in {"draft", "checked"}:
+            raise ValueError("备份包中的候选结论状态无效。")
+        claim_id = row.get("claim_id")
+        if claim_id is not None and _positive_int(claim_id, "结论") not in claim_ids:
+            raise ValueError("备份包中的候选结论核验记录无效。")
     for row in tables["evidence_review_events"]:
         if (
             _positive_int(row.get("evidence_card_id"), "证据")
@@ -450,6 +472,11 @@ def _validated_package(content: bytes) -> tuple[dict[str, Any], dict[str, Any], 
             or source_project.get("name") != project.get("name")
         ):
             raise ValueError("备份包中的项目信息不一致。")
+        # Backups created before import-time candidate drafts had no such table.
+        # They remain valid: restoring them simply yields no pending candidates.
+        legacy_candidates = "claim_candidates" not in tables
+        if legacy_candidates:
+            tables["claim_candidates"] = []
         for table in _TABLES:
             rows = tables.get(table)
             if not isinstance(rows, list) or any(
@@ -457,6 +484,8 @@ def _validated_package(content: bytes) -> tuple[dict[str, Any], dict[str, Any], 
             ):
                 raise ValueError(f"备份包中的 {table} 数据结构无效。")
         counts = manifest.get("counts")
+        if legacy_candidates and isinstance(counts, dict):
+            counts = {**counts, "claim_candidates": 0}
         if not isinstance(counts, dict) or any(
             counts.get(table) != len(tables[table]) for table in _TABLES
         ):
@@ -777,6 +806,38 @@ def restore_project_backup(db: Any, content: bytes, restored_name: str) -> Proje
                     raise ValueError("备份包包含重复的结论编号。")
                 maps["claim"][old_id] = int(cursor.lastrowid)
 
+
+            for row in tables["claim_candidates"]:
+                source_segments = _remap_json_text(
+                    row.get("source_segment_ids_json") or "[]",
+                    maps,
+                    [],
+                    root_key="source_segment_ids",
+                )
+                claim_old = row.get("claim_id")
+                claim_new = (
+                    None
+                    if claim_old is None
+                    else _mapped(maps["claim"], claim_old, "结论")
+                )
+                connection.execute(
+                    "INSERT INTO claim_candidates(project_id,material_id,claim_text,"
+                    "source_segment_ids_json,model,uncertainties_json,status,claim_id,"
+                    "checked_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        project_id,
+                        _mapped(maps["material"], row.get("material_id"), "材料"),
+                        row.get("claim_text"),
+                        source_segments,
+                        row.get("model") or "",
+                        row.get("uncertainties_json") or "[]",
+                        row.get("status") or "draft",
+                        claim_new,
+                        row.get("checked_at"),
+                        row.get("created_at") or _utc_now(),
+                        row.get("updated_at") or _utc_now(),
+                    ),
+                )
             for row in tables["evidence_review_events"]:
                 rechecked = _remap_json_text(
                     row.get("rechecked_claim_ids_json") or "[]",

@@ -127,5 +127,6 @@ class MaterialImportResult:
     material_id: int
     redacted_text: str
     evidence_card_ids: list[int]
+    claim_candidate_ids: list[int] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 

@@ -33,6 +33,7 @@ from .llm import (
     request_claim_evidence_review,
     request_evidence_assistance,
     request_evidence_card_generation,
+    request_material_claim_candidates,
 )
 from .models import (
     ClaimEvaluation,
@@ -364,10 +365,66 @@ def import_text_material(
             )
             evidence_card_ids.append(card_id)
 
+    claim_candidate_ids: list[int] = []
+    candidate_settings_ready = all(
+        hasattr(llm_settings, field)
+        for field in ("configured", "model", "max_context_chars")
+    )
+    if consent == ConsentStatus.CONFIRMED.value and candidate_settings_ready and llm_settings.configured:
+        try:
+            if progress_callback is not None:
+                progress_callback("正在从脱敏材料中提取待核验结论草稿……")
+            candidate_advice = request_material_claim_candidates(
+                segments,
+                source_role=source_role,
+                context=context,
+                config=llm_settings,
+            )
+            for candidate in candidate_advice.candidates:
+                candidate_id = db.create_claim_candidate(
+                    project_id,
+                    material_id,
+                    candidate.claim_text,
+                    source_segment_ids=candidate.segment_ids,
+                    model=candidate_advice.model,
+                    uncertainties=candidate_advice.uncertainties,
+                )
+                claim_candidate_ids.append(candidate_id)
+            db.create_agent_run(
+                project_id,
+                "llm_material_claim_candidate_generation",
+                status="completed",
+                input_data={
+                    "material_id": material_id,
+                    "segment_count": len(segments),
+                    "model": llm_settings.model,
+                },
+                output_data={
+                    "candidate_count": len(claim_candidate_ids),
+                    "uncertainties": list(candidate_advice.uncertainties),
+                    "model": candidate_advice.model,
+                },
+            )
+        except (LLMError, ValueError, KeyError) as exc:
+            db.create_agent_run(
+                project_id,
+                "llm_material_claim_candidate_generation",
+                status="failed",
+                input_data={
+                    "material_id": material_id,
+                    "segment_count": len(segments),
+                    "model": getattr(llm_settings, "model", ""),
+                },
+                error_message=str(exc)[:500],
+            )
+            warnings.append(
+                "结论候选提取未完成；证据卡仍可正常审核，稍后可重新导入材料。"
+            )
     return MaterialImportResult(
         material_id=material_id,
         redacted_text=redaction.redacted_text,
         evidence_card_ids=evidence_card_ids,
+        claim_candidate_ids=claim_candidate_ids,
         warnings=warnings,
     )
 

@@ -414,7 +414,7 @@ with tab_import:
                     "is_fictional": is_fictional,
                 }
                 try:
-                    with st.spinner("正在检查隐私并生成证据卡……"):
+                    with st.spinner("正在检查隐私并生成证据卡与结论草稿……"):
                         try:
                             result = import_text_material(
                                 db,
@@ -451,7 +451,8 @@ with tab_import:
                 else:
                     st.success(
                         f"材料 M{result.material_id} 已保存，生成 "
-                        f"{len(result.evidence_card_ids)} 张待审核证据卡。"
+                        f"{len(result.evidence_card_ids)} 张待审核证据卡，"
+                        f"以及 {len(result.claim_candidate_ids)} 条待核验结论草稿。"
                     )
                 if result.warnings:
                     for warning in result.warnings:
@@ -465,7 +466,8 @@ with tab_import:
                     )
                 else:
                     st.info(
-                        "下一步：打开上方“审核证据卡”标签，确认标题、摘要、类型和审核状态。"
+                        "下一步：先打开上方“审核证据卡”确认标题、摘要、类型和审核状态，"
+                        "再到“结论核验”选择或一键核验结论草稿。"
                     )
 
     st.divider()
@@ -590,13 +592,15 @@ with tab_import:
                     if results:
                         st.success(
                             f"已处理 {len(results)} 个文件，共生成 "
-                            f"{sum(len(item.evidence_card_ids) for item in results)} 张待审核证据卡。"
+                            f"{sum(len(item.evidence_card_ids) for item in results)} 张待审核证据卡和 "
+                            f"{sum(len(item.claim_candidate_ids) for item in results)} 条结论草稿。"
                         )
                         with st.expander("查看批量导入结果", expanded=True):
                             for result in results:
                                 st.write(
                                     f"M{result.material_id}：已保存，生成 "
-                                    f"{len(result.evidence_card_ids)} 张证据卡。"
+                                    f"{len(result.evidence_card_ids)} 张证据卡和 "
+                                    f"{len(result.claim_candidate_ids)} 条结论草稿。"
                                 )
                                 for warning in result.warnings:
                                     st.caption(f"M{result.material_id}：{warning}")
