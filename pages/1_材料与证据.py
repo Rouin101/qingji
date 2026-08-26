@@ -29,6 +29,7 @@ from qingji.ui import (
     render_sidebar_note,
 )
 from qingji.workflow import (
+    complete_missing_material_evidence_cards,
     import_text_material,
     list_regenerable_rejected_evidence_cards,
     regenerate_rejected_material_evidence_cards,
@@ -451,7 +452,7 @@ with tab_import:
                 else:
                     st.success(
                         f"材料 M{result.material_id} 已保存，生成 "
-                        f"{len(result.evidence_card_ids)} 张待审核证据卡，"
+                        f"{len(result.evidence_card_ids)} 张可引用证据卡，"
                         f"以及 {len(result.claim_candidate_ids)} 条待核验结论草稿。"
                     )
                 if result.warnings:
@@ -624,18 +625,60 @@ with tab_review:
     if all_cards:
         status_columns = st.columns(3)
         status_columns[0].metric(
-            "待审核",
+            "待复核（可引用）",
             sum(card.get("review_status") == "draft" for card in all_cards),
         )
         status_columns[1].metric(
-            "已批准",
+            "人工确认（可引用）",
             sum(card.get("review_status") == "approved" for card in all_cards),
         )
         status_columns[2].metric(
-            "授权待确认",
-            sum(card.get("consent_status") != "confirmed" for card in all_cards),
+            "已排除",
+            sum(card.get("review_status") == "rejected" for card in all_cards),
         )
-        st.caption("只有“已确认授权 + 已批准”的证据卡会进入结论核验。")
+        st.caption("已确认授权且未被人工排除的证据卡会进入结论核验；待复核卡也可参与。")
+
+    covered_segment_ids = {
+        int(card["segment_id"])
+        for card in all_cards
+        if card.get("consent_status") == "confirmed"
+    }
+    uncovered_segments = [
+        segment
+        for material in db.list_materials(project_id)
+        if material.get("consent_status") == "confirmed"
+        for segment in db.list_segments(int(material["id"]))
+        if int(segment["id"]) not in covered_segment_ids
+    ]
+    if uncovered_segments:
+        with st.expander("补齐既有材料的片段证据卡", expanded=True):
+            st.caption(
+                f"检测到 {len(uncovered_segments)} 个已确认授权片段尚无证据卡。"
+                "补齐会为每个缺失片段生成一张待复核但可引用的卡，并重新核验已有结论；"
+                "不会改动已有卡片或审核历史。"
+            )
+            complete_coverage = st.button(
+                "为全部缺失片段生成证据卡",
+                type="primary",
+                disabled=not llm_settings.configured,
+                key=f"complete_evidence_coverage_{project_id}",
+            )
+            if not llm_settings.configured:
+                st.info("配置并重启大模型服务后，可在这里补齐既有材料。")
+            if complete_coverage:
+                try:
+                    with st.spinner("正在逐片段生成证据卡并重新核验结论……"):
+                        coverage_results = complete_missing_material_evidence_cards(
+                            db, project_id
+                        )
+                except Exception as exc:
+                    st.error(f"补齐片段证据卡失败：{exc}")
+                else:
+                    card_count = sum(
+                        len(item.evidence_card_ids) for item in coverage_results
+                    )
+                    st.success(f"已补齐 {card_count} 张证据卡，并重新核验当前项目的历史结论。")
+                    st.rerun()
 
     authorized_draft_cards = [
         card
@@ -653,15 +696,15 @@ with tab_review:
     )
     with st.expander("批量审核工具", expanded=False):
         st.caption(
-            f"当前有 {len(authorized_draft_cards)} 张已确认授权的待审核卡片。"
-            "未确认授权的卡片不会进入可引用证据集，也不会发送给模型。"
+            f"当前有 {len(authorized_draft_cards)} 张已确认授权的待复核卡片。"
+            "它们已可引用；未确认授权或已排除的卡片不会进入证据集。"
         )
         manual_confirmation = st.checkbox(
-            "我确认这些已授权卡片的来源和脱敏结果可以进入项目证据集。",
+            "我已复核这些已授权卡片，并将其标记为人工确认。",
             key=f"bulk_review_confirm_{project_id}",
         )
         manual_bulk = st.button(
-            "一键批准全部已授权待审核卡片",
+            "一键人工确认全部待复核卡片",
             type="primary",
             disabled=not manual_confirmation or not authorized_draft_cards,
             key=f"bulk_approve_evidence_{project_id}",
@@ -696,7 +739,7 @@ with tab_review:
                 failures.append(f"批量审核失败：{exc}")
             if updated_count:
                 st.success(
-                    f"已批准 {updated_count} 张证据卡。"
+                    f"已人工确认 {updated_count} 张证据卡。"
                     f"重新核验结论 {len(rechecked_claim_ids)} 条。"
                 )
             if unauthorized_draft_count:
@@ -716,7 +759,7 @@ with tab_review:
                 notice_message = llm_review_notice.get("message", "")
                 getattr(st, notice_level, st.info)(notice_message)
             st.caption(
-                "模型只会读取再次脱敏后的已授权证据卡，并返回批准或拒绝建议。"
+                "模型只会读取再次脱敏后的已授权证据卡，并返回人工确认或排除建议。"
                 "勾选确认后，模型结果会直接写入审核状态。"
             )
             trust_model = st.checkbox(
@@ -817,8 +860,8 @@ with tab_review:
                         for result in results:
                             rechecked_claim_ids.update(result.rechecked_claim_ids)
                 completion_message = (
-                    f"模型审核完成：批准 {approved_count} 张，"
-                    f"拒绝 {rejected_count} 张，"
+                    f"模型审核完成：人工确认 {approved_count} 张，"
+                    f"排除 {rejected_count} 张，"
                     f"重新核验结论 {len(rechecked_claim_ids)} 条。"
                 )
                 if model_failures:
@@ -1041,8 +1084,6 @@ with tab_review:
                     key=f"type_{card_id}",
                 )
                 current_decision = card.get("review_status", "draft")
-                if current_decision == "draft":
-                    current_decision = "approved"
                 decision = st.radio(
                     "审核结论",
                     ["draft", "approved", "rejected"],
@@ -1055,7 +1096,7 @@ with tab_review:
                 )
                 change_reason = st.text_area(
                     "本次审核说明（可选）",
-                    placeholder="例如：已核对来源与授权，批准进入可引用证据集。",
+                    placeholder="例如：已核对来源与授权，或说明为什么要排除该卡。",
                     max_chars=500,
                     key=f"review_reason_{card_id}",
                 )

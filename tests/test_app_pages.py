@@ -159,7 +159,7 @@ class AppPageSmokeTest(unittest.TestCase):
         app.run()
 
         self.assertEqual(app.exception, [])
-        self.assertEqual(app.radio(key=f"decision_{card_id}").value, "approved")
+        self.assertEqual(app.radio(key=f"decision_{card_id}").value, "draft")
 
     def test_bulk_approval_approves_authorized_draft_cards(self) -> None:
         database = get_database()

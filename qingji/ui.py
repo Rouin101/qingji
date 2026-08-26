@@ -30,9 +30,9 @@ CONSENT_LABELS = {
 }
 
 REVIEW_STATUS_LABELS = {
-    "draft": "待审核",
-    "approved": "已批准",
-    "rejected": "已拒绝",
+    "draft": "待复核（可引用）",
+    "approved": "人工确认（可引用）",
+    "rejected": "已排除",
 }
 
 VERDICT_LABELS = {
@@ -285,7 +285,13 @@ def get_next_action(progress: Mapping[str, Any]) -> dict[str, str]:
 
     materials = int(progress.get("materials", 0) or 0)
     evidence_cards = int(progress.get("evidence_cards", 0) or 0)
-    approved_cards = int(progress.get("approved_evidence_cards", 0) or 0)
+    approved_cards = int(
+        progress.get(
+            "eligible_evidence_cards",
+            progress.get("approved_evidence_cards", 0),
+        )
+        or 0
+    )
     claims = int(progress.get("claims", 0) or 0)
     open_tasks = int(progress.get("open_followup_tasks", 0) or 0)
     if materials == 0:
@@ -366,11 +372,15 @@ def render_sidebar_note(
         st.markdown("### 青迹")
         st.caption("让实践有迹可循，让结论有据可查。")
         if progress is not None:
+            eligible_cards = progress.get(
+                "eligible_evidence_cards",
+                progress.get("approved_evidence_cards", 0),
+            )
             st.divider()
             st.markdown("### 当前进度")
             st.caption(
                 f"材料 {int(progress.get('materials', 0) or 0)} · "
-                f"已批准证据 {int(progress.get('approved_evidence_cards', 0) or 0)} · "
+                f"可引用证据 {int(eligible_cards or 0)} · "
                 f"结论 {int(progress.get('claims', 0) or 0)} · "
                 f"待补证 {int(progress.get('open_followup_tasks', 0) or 0)}"
             )

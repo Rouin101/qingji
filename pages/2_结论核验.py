@@ -144,8 +144,10 @@ if submitted:
 st.markdown("### 从材料提取待核验结论")
 draft_candidates = db.list_claim_candidates(project_id, status="draft")
 candidate_submitted = False
-approved_evidence_count = len(
-    db.list_evidence_cards(project_id, review_status="approved")
+eligible_evidence_count = sum(
+    card.get("review_status") != "rejected"
+    and card.get("consent_status") == "confirmed"
+    for card in db.list_evidence_cards(project_id)
 )
 if not draft_candidates:
     st.info(
@@ -154,11 +156,10 @@ if not draft_candidates:
 else:
     st.caption(
         "这些候选在材料导入时从脱敏、已确认授权的内容中生成；"
-        "不含背景、目的、流程或其他客观介绍。候选本身不是结论，"
-        "仅在已批准证据基础上完成核验后才会写入成果。"
+        "候选本身不是结论；核验会使用已确认授权且未被人工排除的证据卡。"
     )
-    if not approved_evidence_count:
-        st.warning("请先在“材料与证据”审核并批准至少一张证据卡，再核验候选结论。")
+    if not eligible_evidence_count:
+        st.warning("请先导入已确认授权且未被人工排除的证据卡，再核验候选结论。")
     candidate_by_id = {int(item["id"]): item for item in draft_candidates}
     with st.form(f"claim_candidate_selection_{project_id}", clear_on_submit=False):
         selected_candidate_ids: list[int] = []
@@ -183,11 +184,11 @@ else:
         selected_submitted = st.form_submit_button(
             "核验已选结论",
             type="primary",
-            disabled=not approved_evidence_count,
+            disabled=not eligible_evidence_count,
         )
         all_submitted = st.form_submit_button(
             f"一键核验全部待选结论（{len(draft_candidates)} 条）",
-            disabled=not approved_evidence_count,
+            disabled=not eligible_evidence_count,
         )
     candidate_submitted = selected_submitted or all_submitted
     candidate_ids_to_check = (

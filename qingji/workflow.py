@@ -27,7 +27,7 @@ from typing import Any, Callable
 from .claims import evaluate_claim, validate_citation_ids
 from .config import llm_settings
 from .diagnostics import build_retrieval_diagnostic
-from .evidence import split_text
+from .evidence import is_retrievable_evidence, split_text
 from .llm import (
     LLMError,
     request_claim_evidence_review,
@@ -92,6 +92,14 @@ class MaterialEvidenceRegenerationResult:
     source_evidence_card_ids: tuple[int, ...]
     replacement_evidence_card_ids: tuple[int, ...]
     rejection_reasons: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class MaterialEvidenceCoverageResult:
+    """Cards added for source segments that had no persisted card yet."""
+
+    material_id: int
+    evidence_card_ids: tuple[int, ...]
 
 
 def _status_value(value: Any) -> str:
@@ -294,7 +302,8 @@ def import_text_material(
                     consent_status=consent,
                     source_role=source_role,
                     context=context,
-                    max_cards=_MAX_EVIDENCE_CARDS_PER_MATERIAL,
+                    max_cards=len(segments),
+                    require_full_segment_coverage=True,
                     progress_callback=(
                         lambda completed, total: progress_callback(
                             f"已完成脱敏，正在生成证据卡（第 {completed}/{total} 批）。"
@@ -309,9 +318,7 @@ def import_text_material(
                 )
                 if discarded_card_count:
                     warnings.append(
-                        f"语义整理跳过 {discarded_card_count} 张重复引用片段的卡片，"
-                        f"保留 {len(advice.cards)} 张有效语义卡；"
-                        "未覆盖片段不会使用本地规则补卡。"
+                        f"语义整理跳过 {discarded_card_count} 张重复引用片段的卡片。"
                     )
                 db.create_agent_run(
                     project_id,
@@ -325,8 +332,7 @@ def import_text_material(
                 )
                 if not drafts:
                     warnings.append(
-                        "材料已完成语义整理，但没有抽取出可独立复核的明确事实，"
-                        "因此未生成证据卡。"
+                        "材料已完成语义整理，但没有生成与全部片段对应的证据卡。"
                     )
             except (LLMError, ValueError, KeyError) as exc:
                 db.create_agent_run(
@@ -434,16 +440,15 @@ def _load_approved_candidates(
     project_id: int,
     evidence_rows: list[dict[str, Any]] | None = None,
 ) -> list[EvidenceCandidate]:
-    """Return evidence that is both manually approved and authorized."""
+    """Return authorized cards that have not been manually excluded."""
 
     rows = evidence_rows
     if rows is None:
-        rows = db.list_evidence_cards(project_id, review_status="approved")
+        rows = db.list_evidence_cards(project_id)
     return [
         evidence_candidate_from_mapping(row)
         for row in rows
-        if _status_value(row.get("review_status")) == "approved"
-        if _status_value(row.get("consent_status")) == ConsentStatus.CONFIRMED.value
+        if is_retrievable_evidence(row)
     ]
 
 
@@ -1046,6 +1051,78 @@ def regenerate_rejected_material_evidence_cards(
     return tuple(results)
 
 
+def complete_missing_material_evidence_cards(
+    db: Any, project_id: int
+) -> tuple[MaterialEvidenceCoverageResult, ...]:
+    """Generate draft cards for authorized source segments lacking a card.
+
+    This explicit repair action preserves earlier cards and review history,
+    creating cards only for source segments that have never had one.
+    """
+
+    results: list[MaterialEvidenceCoverageResult] = []
+    all_cards = db.list_evidence_cards(project_id)
+    for material in db.list_materials(project_id):
+        if _status_value(material.get("consent_status")) != ConsentStatus.CONFIRMED.value:
+            continue
+        material_id = int(material["id"])
+        existing_segment_ids = {
+            int(card["segment_id"])
+            for card in all_cards
+            if int(card.get("material_id") or 0) == material_id
+        }
+        missing_segments = [
+            segment
+            for segment in db.list_segments(material_id)
+            if int(segment["id"]) not in existing_segment_ids
+        ]
+        if not missing_segments:
+            continue
+        model_segments, full_card_segments = _model_generation_candidates(
+            material_id, missing_segments, str(material.get("source_role") or "")
+        )
+        advice = request_evidence_card_generation(
+            model_segments,
+            consent_status=material.get("consent_status"),
+            source_role=str(material.get("source_role") or ""),
+            context=str(material.get("context") or ""),
+            max_cards=len(missing_segments),
+            require_full_segment_coverage=True,
+        )
+        drafts = _model_card_drafts(material_id, full_card_segments, advice)
+        if len(drafts) != len(missing_segments):
+            raise ValueError(f"材料 M{material_id} 未能补齐全部缺失片段的证据卡。")
+        created_ids = tuple(
+            db.create_evidence_card(
+                project_id,
+                draft.segment_id,
+                draft.evidence_type,
+                draft.title,
+                draft.quote,
+                draft.summary,
+                source_locator=draft.source_locator,
+                review_status=ReviewStatus.DRAFT.value,
+            )
+            for draft in drafts
+        )
+        db.create_agent_run(
+            project_id,
+            "llm_evidence_card_full_coverage",
+            status="completed",
+            input_data={"material_id": material_id, "segment_count": len(missing_segments)},
+            output_data={"evidence_card_ids": list(created_ids), **advice.as_dict()},
+        )
+        results.append(
+            MaterialEvidenceCoverageResult(
+                material_id=material_id, evidence_card_ids=created_ids
+            )
+        )
+
+    if results:
+        recheck_project_claims(db, project_id)
+    return tuple(results)
+
+
 def review_evidence_cards(
     db: Any,
     updates: Sequence[Mapping[str, Any]],
@@ -1132,7 +1209,10 @@ def review_evidence_cards(
 
     should_recheck = any(
         item["changed"]
-        and "approved" in {item["old_status"], item["changes"]["review_status"]}
+        and (
+            item["old_status"] != ReviewStatus.REJECTED.value
+            or item["changes"]["review_status"] != ReviewStatus.REJECTED.value
+        )
         for item in prepared
     )
     rechecked_claim_ids: tuple[int, ...] = ()

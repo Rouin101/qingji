@@ -6,8 +6,11 @@ import csv
 import io
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 from pathlib import Path
 
+from qingji.llm import LLMConfigurationError
 from qingji.db import Database
 from qingji.evaluation import (
     MAX_EVAL_FILE_BYTES,
@@ -25,13 +28,46 @@ from qingji.retrieval_eval import RetrievalEvalCase
 from qingji.workflow import import_text_material
 
 
+def _full_coverage_advice(segments, **_kwargs):
+    cards = tuple(
+        SimpleNamespace(
+            segment_ids=(int(segment["id"]),),
+            title="模型片段卡",
+            summary="模型根据该脱敏片段生成的可复核摘要。",
+            evidence_type="formal_record",
+        )
+        for segment in segments
+    )
+    return SimpleNamespace(
+        cards=cards,
+        discarded_card_count=0,
+        as_dict=lambda: {"cards": len(cards), "model": "test-model"},
+    )
+
 class CustomEvaluationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.db = Database(Path(self.temp_dir.name) / "qingji.db")
         self.db.initialize()
+        self._model_config_patcher = patch(
+            "qingji.workflow.llm_settings", SimpleNamespace(configured=True)
+        )
+        self._claim_review_patcher = patch(
+            "qingji.workflow.request_claim_evidence_review",
+            side_effect=LLMConfigurationError("test fallback"),
+        )
+        self._model_cards_patcher = patch(
+            "qingji.workflow.request_evidence_card_generation",
+            side_effect=_full_coverage_advice,
+        )
+        self._model_config_patcher.start()
+        self._model_cards_patcher.start()
+        self._claim_review_patcher.start()
 
     def tearDown(self) -> None:
+        self._claim_review_patcher.stop()
+        self._model_cards_patcher.stop()
+        self._model_config_patcher.stop()
         self.temp_dir.cleanup()
 
     def _approved_card(self, project_id: int, text: str) -> int:

@@ -261,7 +261,7 @@ class WorkflowTestCase(unittest.TestCase):
             ["第一条事实。"],
         )
         self.assertTrue(
-            any("不会使用本地规则补卡" in warning for warning in result.warnings)
+            any("语义整理跳过" in warning for warning in result.warnings)
         )
         self.assertEqual(
             self.db.get_latest_project_run(
@@ -307,7 +307,7 @@ class WorkflowTestCase(unittest.TestCase):
             len(model_candidates), len(self.db.list_segments(result.material_id))
         )
         self.assertEqual(result.evidence_card_ids, [])
-        self.assertTrue(any("未生成证据卡" in warning for warning in result.warnings))
+        self.assertTrue(any("全部片段对应" in warning for warning in result.warnings))
 
     def test_unauthorized_material_has_no_cards_and_is_not_citable(self) -> None:
         result = self._import(DIFFICULTY_TEXT, consent="unknown")

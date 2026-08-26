@@ -897,10 +897,15 @@ class Database:
     ) -> list[dict[str, Any]]:
         query = query.strip()
         if not query:
-            return self.list_evidence_cards(
-                project_id,
-                review_status="approved" if approved_only else None,
-            )[:limit]
+            cards = self.list_evidence_cards(project_id)
+            if approved_only:
+                cards = [
+                    row
+                    for row in cards
+                    if row.get("review_status") != "rejected"
+                    and row.get("consent_status") == "confirmed"
+                ]
+            return cards[:limit]
 
         # Detect the index in case another process initialized this instance's
         # database.
@@ -925,7 +930,10 @@ class Database:
             if self.search_backend.startswith("fts5") and len(query) >= 3:
                 match_query = '"' + query.replace('"', '""') + '"'
                 status_clause = (
-                    "AND ec.review_status = 'approved'" if approved_only else ""
+                    "AND ec.review_status != 'rejected' "
+                    "AND m.consent_status = 'confirmed'"
+                    if approved_only
+                    else ""
                 )
                 try:
                     rows = connection.execute(
@@ -971,7 +979,8 @@ class Database:
                     pattern,
                 ]
                 if approved_only:
-                    clauses.append("ec.review_status = 'approved'")
+                    clauses.append("ec.review_status != 'rejected'")
+                    clauses.append("m.consent_status = 'confirmed'")
                 rows = connection.execute(
                     self._evidence_select()
                     + " WHERE "
@@ -1507,6 +1516,12 @@ class Database:
                         WHERE project_id = :project_id
                           AND review_status = 'approved')
                         AS approved_evidence_cards,
+                    (SELECT COUNT(*) FROM evidence_cards ec
+                        JOIN segments s ON s.id = ec.segment_id
+                        JOIN materials m ON m.id = s.material_id
+                        WHERE ec.project_id = :project_id
+                          AND ec.review_status != 'rejected'
+                          AND m.consent_status = 'confirmed') AS eligible_evidence_cards,
                     (SELECT COUNT(*) FROM claims
                         WHERE project_id = :project_id) AS claims,
                     (SELECT COUNT(*) FROM followup_tasks t

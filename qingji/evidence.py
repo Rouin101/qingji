@@ -7,7 +7,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from .models import EvidenceDraft, EvidenceType
+from .models import ConsentStatus, EvidenceDraft, EvidenceType, ReviewStatus
 
 
 @dataclass(frozen=True)
@@ -58,6 +58,22 @@ def evidence_type_for_role(source_role: str) -> EvidenceType:
             return evidence_type
     # An unknown source should not silently become primary factual evidence.
     return EvidenceType.TEAM_ANALYSIS
+
+
+def is_retrievable_evidence(row: Mapping[str, Any]) -> bool:
+    """Return whether an authorized card remains in the project evidence set."""
+
+    review_status = getattr(
+        row.get("review_status"), "value", row.get("review_status")
+    )
+    consent_status = getattr(
+        row.get("consent_status"), "value", row.get("consent_status")
+    )
+    return (
+        review_status != ReviewStatus.REJECTED.value
+        and consent_status == ConsentStatus.CONFIRMED.value
+    )
+
 
 
 def _split_long_sentence(sentence: str, max_chars: int) -> list[str]:

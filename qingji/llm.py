@@ -50,6 +50,7 @@ class LLMResponseError(LLMError):
 # overwhelming an OpenAI-compatible provider or making rate-limit failures
 # more likely.
 _SEMANTIC_CARD_MAX_PARALLEL_REQUESTS = 3
+_SEMANTIC_CARD_FULL_COVERAGE_BATCH_SIZE = 12
 
 
 @dataclass(frozen=True)
@@ -1248,6 +1249,7 @@ def build_evidence_card_generation_prompt(
     review_feedback: Sequence[str] | None = None,
     max_cards: int = _SEMANTIC_CARD_MAX_CARDS,
     max_context_chars: int = 12000,
+    require_full_segment_coverage: bool = False,
 ) -> tuple[str, tuple[int, ...]]:
     """Build a bounded prompt for semantic card extraction from redacted text."""
 
@@ -1286,15 +1288,27 @@ def build_evidence_card_generation_prompt(
         )
         for item in normalized
     ]
+    card_scope = (
+        "本次必须为每一个输入片段各生成一张卡：每张卡只引用一个 segment_id，"
+        "所有输入的 segment_id 必须恰好各出现一次。标题、总结判断、建议和边界说明"
+        "也要如实生成，交由人工后续决定是否排除。"
+        if require_full_segment_coverage
+        else "请只从片段中抽取适合人工审核的具体事实、受访者陈述、工作人员说明、现场观察或正式记录。"
+    )
+    card_count_rule = (
+        f"必须生成 {len(normalized)} 张，且不得遗漏任何片段。"
+        if require_full_segment_coverage
+        else f"最多生成 {max_cards} 张；如果没有合适的事实，cards 可以为空。"
+    )
     prompt = (
         "你是青迹的语义证据卡生成模块。以下是已经确认授权、再次脱敏后的材料片段。"
-        "请只从片段中抽取适合人工审核的具体事实、受访者陈述、工作人员说明、现场观察"
-        "或正式记录。不得补造人物、数字、时间、地点、因果关系或原文没有的事实；"
-        "不得把标题、目录、团队分析、总结判断、建议、证据边界或群体化推论单独生成"
-        "为事实证据卡；不要把互不相关的片段拼成一张卡。一个事实足够时只引用一个片段，"
+        "不得补造人物、数字、时间、地点、因果关系或原文没有的事实；"
+        + card_scope
+        + "不要把互不相关的片段拼成一张卡。一个事实足够时只引用一个片段，"
         "只有同一事实确实跨越多个相邻片段时才合并。模型只返回片段编号，引用原文由本地"
         "程序按编号拼回，因此不要返回 quote。每张卡都必须能被人工根据原片段复核，"
-        f"最多生成 {max_cards} 张；如果没有合适的事实，cards 可以为空。只返回 JSON，"
+        + card_count_rule
+        + "只返回 JSON，"
         "不要 Markdown 围栏。\n\n"
         "JSON 字段必须为：cards（数组，每项包含 segment_ids、title、summary、"
         "evidence_type、uncertainties）；segment_ids 只能使用输入中的 segment_id，"
@@ -1304,7 +1318,7 @@ def build_evidence_card_generation_prompt(
         "还可以返回 uncertainties（数组）。\n\n"
         f"材料元数据：{json.dumps(source, ensure_ascii=False)}\n"
     )
-    if feedback_items:
+    if feedback_items and not require_full_segment_coverage:
         prompt += (
             "上一轮卡片被拒绝的原因如下。请据此避开分析结论、建议和来源边界说明；"
             "只有原文包含可独立复核的明确事实时才生成卡，否则返回空 cards。\n"
@@ -1321,6 +1335,7 @@ def _parse_evidence_card_generation(
     allowed_ids: Sequence[int],
     max_cards: int,
     model: str,
+    require_full_segment_coverage: bool = False,
 ) -> tuple[tuple[EvidenceCardGenerationItem, ...], tuple[str, ...], int]:
     data = _extract_json_object(_response_content(response))
     raw_cards = data.get("cards")
@@ -1352,6 +1367,8 @@ def _parse_evidence_card_generation(
         positions = [position[segment_id] for segment_id in segment_ids]
         if positions != list(range(positions[0], positions[0] + len(positions))):
             raise LLMResponseError("模型语义证据卡只能引用连续的相邻片段。")
+        if require_full_segment_coverage and len(segment_ids) != 1:
+            raise LLMResponseError("全片段模式下每张证据卡只能引用一个片段。")
         if used_ids.intersection(segment_ids):
             # A later card that overlaps an earlier valid one is safe to omit:
             # preserving the earlier card maintains one-to-one provenance.
@@ -1378,6 +1395,13 @@ def _parse_evidence_card_generation(
             )
         )
         used_ids.update(segment_ids)
+    if require_full_segment_coverage and used_ids != set(ordered_ids):
+        missing_ids = sorted(set(ordered_ids) - used_ids)
+        raise LLMResponseError(
+            "模型未为全部片段生成证据卡："
+            + "、".join(str(item) for item in missing_ids)
+        )
+
 
     return (
         tuple(parsed),
@@ -1394,6 +1418,7 @@ def request_evidence_card_generation(
     context: str = "",
     review_feedback: Sequence[str] | None = None,
     max_cards: int = _SEMANTIC_CARD_MAX_CARDS,
+    require_full_segment_coverage: bool = False,
     config: LLMSettings | None = None,
     progress_callback: Callable[[int, int], None] | None = None,
     post_json: Callable[
@@ -1427,7 +1452,13 @@ def request_evidence_card_generation(
     current_chars = 0
     for item in normalized:
         item_chars = len(item["text"]) + 120
-        if current_batch and current_chars + item_chars > target_chars:
+        if current_batch and (
+            current_chars + item_chars > target_chars
+            or (
+                require_full_segment_coverage
+                and len(current_batch) >= _SEMANTIC_CARD_FULL_COVERAGE_BATCH_SIZE
+            )
+        ):
             batches.append(current_batch)
             current_batch = []
             current_chars = 0
@@ -1441,6 +1472,9 @@ def request_evidence_card_generation(
     batch_specs: list[tuple[int, list[dict[str, Any]], int]] = []
     for batch_index, batch in enumerate(batches):
         remaining_batches = len(batches) - batch_index
+        if require_full_segment_coverage:
+            batch_specs.append((batch_index, batch, len(batch)))
+            continue
         batch_limit = max(
             1,
             min(
@@ -1471,6 +1505,7 @@ def request_evidence_card_generation(
             review_feedback=review_feedback,
             max_cards=batch_limit,
             max_context_chars=current.max_context_chars,
+            require_full_segment_coverage=require_full_segment_coverage,
         )
         response = _call_chat_completion(
             prompt,
@@ -1482,6 +1517,7 @@ def request_evidence_card_generation(
             allowed_ids=allowed_ids,
             max_cards=batch_limit,
             model=current.model,
+            require_full_segment_coverage=require_full_segment_coverage,
         )
         return batch_index, cards, uncertainties, discarded_card_count
 
@@ -1520,8 +1556,10 @@ def request_evidence_card_generation(
         all_uncertainties.extend(uncertainties)
         discarded_card_count += batch_discarded_count
 
+    if require_full_segment_coverage and len(all_cards) != len(normalized):
+        raise LLMResponseError("模型未生成与全部材料片段一一对应的证据卡。")
     return EvidenceCardGenerationAdvice(
-        cards=tuple(all_cards[:max_cards]),
+        cards=tuple(all_cards if require_full_segment_coverage else all_cards[:max_cards]),
         uncertainties=tuple(dict.fromkeys(all_uncertainties))[:_MAX_LIST_ITEMS],
         model=current.model,
         chunk_count=len(batches),

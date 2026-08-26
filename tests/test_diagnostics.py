@@ -4,21 +4,57 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 from pathlib import Path
 
+from qingji.llm import LLMConfigurationError
 from qingji.db import Database
 from qingji.demo import add_demo_supplement, create_demo_project
 from qingji.retrieval_eval import evaluate_retrieval
 from qingji.workflow import check_and_store_claim, import_text_material
 
 
+def _full_coverage_advice(segments, **_kwargs):
+    cards = tuple(
+        SimpleNamespace(
+            segment_ids=(int(segment["id"]),),
+            title="模型片段卡",
+            summary="模型根据该脱敏片段生成的可复核摘要。",
+            evidence_type="formal_record",
+        )
+        for segment in segments
+    )
+    return SimpleNamespace(
+        cards=cards,
+        discarded_card_count=0,
+        as_dict=lambda: {"cards": len(cards), "model": "test-model"},
+    )
+
 class RetrievalDiagnosticTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.db = Database(Path(self.temp_dir.name) / "qingji.db")
         self.db.initialize()
+        self._model_config_patcher = patch(
+            "qingji.workflow.llm_settings", SimpleNamespace(configured=True)
+        )
+        self._claim_review_patcher = patch(
+            "qingji.workflow.request_claim_evidence_review",
+            side_effect=LLMConfigurationError("test fallback"),
+        )
+        self._model_cards_patcher = patch(
+            "qingji.workflow.request_evidence_card_generation",
+            side_effect=_full_coverage_advice,
+        )
+        self._model_config_patcher.start()
+        self._model_cards_patcher.start()
+        self._claim_review_patcher.start()
 
     def tearDown(self) -> None:
+        self._claim_review_patcher.stop()
+        self._model_cards_patcher.stop()
+        self._model_config_patcher.stop()
         self.temp_dir.cleanup()
 
     def _import(self, project_id: int, text: str, consent: str) -> object:
@@ -56,8 +92,8 @@ class RetrievalDiagnosticTests(unittest.TestCase):
 
         self.assertIsNotNone(run)
         diagnostic = run["output"]
-        self.assertEqual(diagnostic["eligible_count"], 1)
-        self.assertEqual(diagnostic["excluded_evidence_count"], 1)
+        self.assertEqual(diagnostic["eligible_count"], 2)
+        self.assertEqual(diagnostic["excluded_evidence_count"], 0)
         self.assertEqual(diagnostic["excluded_material_count"], 1)
         self.assertEqual(
             diagnostic["ranked_candidates"][0]["evidence_id"],

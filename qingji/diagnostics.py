@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
+from .evidence import is_retrievable_evidence
 
 from .models import ClaimEvaluation
 from .retrieval import (
@@ -30,16 +31,16 @@ def build_retrieval_diagnostic(
     excluded_evidence: list[dict[str, Any]] = []
     for row in evidence_rows:
         reasons: list[str] = []
-        if row.get("review_status") != "approved":
-            reasons.append("证据卡尚未人工批准")
+        if row.get("review_status") == "rejected":
+            reasons.append("证据卡已被人工排除")
         if row.get("consent_status") != "confirmed":
             reasons.append("来源材料尚未确认授权")
-        if reasons:
+        if reasons or not is_retrievable_evidence(row):
             excluded_evidence.append(
                 {
                     "evidence_id": int(row["id"]),
                     "title": row.get("title") or f"证据 E{row['id']}",
-                    "reasons": reasons,
+                    "reasons": reasons or ["证据卡当前不可引用"],
                 }
             )
         else:

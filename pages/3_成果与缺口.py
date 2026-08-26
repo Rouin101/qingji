@@ -105,7 +105,7 @@ render_page_intro(
 summary_columns = st.columns(4)
 summary_columns[0].metric("核验记录", len(claims))
 summary_columns[1].metric(
-    "可引用证据", stats.get("approved_evidence_cards", 0)
+    "可引用证据", stats.get("eligible_evidence_cards", 0)
 )
 summary_columns[2].metric(
     "待补证", sum(task.get("status") == "open" for task in tasks)

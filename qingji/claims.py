@@ -209,11 +209,6 @@ def evaluate_claim(
         relation = (relation_overrides or {}).get(int(candidate.id))
         if relation not in {"support", "contradict", "context"}:
             relation = _relation(claim_stance, match)
-        if (
-            relation == "support"
-            and candidate.evidence_type == EvidenceType.TEAM_ANALYSIS
-        ):
-            relation = "context"
         if relation == "support":
             supporting.append(candidate)
         elif relation == "contradict":

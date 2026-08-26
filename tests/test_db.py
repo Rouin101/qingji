@@ -115,7 +115,7 @@ class DatabaseTestCase(unittest.TestCase):
             source_locator="第1段",
             review_status="draft",
         )
-        self.assertEqual(self.db.search_evidence(project_id, "验证码"), [])
+        self.assertEqual([item["id"] for item in self.db.search_evidence(project_id, "验证码")], [card_id])
         card = self.db.set_evidence_review_status(card_id, "approved")
         self.assertEqual(card["review_status"], "approved")
         results = self.db.search_evidence(project_id, "验证码")

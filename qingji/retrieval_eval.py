@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .diagnostics import RELEVANCE_THRESHOLD, RETRIEVAL_DIAGNOSTIC_VERSION
+from .evidence import is_retrievable_evidence
 from .retrieval import (
     evidence_candidate_from_mapping,
     rank_evidence_with_explanations,
@@ -78,8 +79,8 @@ def evaluate_retrieval(
         raise ValueError("top_k 必须为正整数。")
     candidates = [
         evidence_candidate_from_mapping(row)
-        for row in db.list_evidence_cards(project_id, review_status="approved")
-        if row.get("consent_status") == "confirmed"
+        for row in db.list_evidence_cards(project_id)
+        if is_retrievable_evidence(row)
     ]
     results: list[dict[str, Any]] = []
     for case in cases:
