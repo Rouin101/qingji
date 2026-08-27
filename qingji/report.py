@@ -28,10 +28,16 @@ def render_outcome_outline_markdown(outline: Mapping[str, Any]) -> str:
     lines.extend(f"- {VERDICT_LABELS[key]}：{counts.get(key, 0)} 条" for key in VERDICT_LABELS)
     lines.extend(("", "### 二、已获支持的发现", ""))
     findings = list(outline.get("supported_findings") or []) + list(outline.get("partial_findings") or [])
-    lines.extend(f"- C{item.get('id', '—')}（{VERDICT_LABELS.get(str(item.get('verdict')), '待核验')}）：{item.get('safe_rewrite') or item.get('claim_text') or '未命名结论'}" for item in findings) or lines.append("- 暂无可纳入的支持性发现。")
+    if not findings:
+        lines.append("- 暂无可纳入的支持性发现。")
+    for item in findings:
+        lines.append(f"- C{item.get('id', '—')}（{VERDICT_LABELS.get(str(item.get('verdict')), '待核验')}）：{item.get('safe_rewrite') or item.get('claim_text') or '未命名结论'}")
     lines.extend(("", "### 三、冲突与需谨慎呈现的发现", ""))
     conflicts = outline.get("conflicts") or []
-    lines.extend(f"- C{item.get('id', '—')}：{item.get('claim_text') or '未命名结论'}" for item in conflicts) or lines.append("- 当前未发现相互冲突的已核验结论。")
+    if not conflicts:
+        lines.append("- 当前未发现相互冲突的已核验结论。")
+    for item in conflicts:
+        lines.append(f"- C{item.get('id', '—')}：{item.get('claim_text') or '未命名结论'}")
     lines.extend(("", "### 四、研究缺口与后续补证", ""))
     for item in outline.get("unsupported") or []: lines.append(f"- C{item.get('id', '—')}：{'；'.join(_list(item.get('missing_evidence_json'))) or '需要补充可追溯材料'}")
     for item in outline.get("open_tasks") or []: lines.append(f"- T{item.get('id', '—')}：{item.get('recommended_action') or item.get('title') or '补充材料'}")

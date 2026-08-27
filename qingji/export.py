@@ -8,6 +8,9 @@ from collections.abc import Iterable, Mapping
 from dataclasses import asdict, is_dataclass
 from typing import Any
 
+from .evidence import is_retrievable_evidence
+from .report import build_outcome_outline, render_outcome_outline_markdown
+
 
 _VERDICT_LABELS = {
     "supported": "已有支持",
@@ -144,13 +147,17 @@ def render_project_markdown(
         f"# 青迹可信证据导出｜{project_data.get('name', '未命名项目')}",
         "",
         "> 本文档仅说明当前项目材料对表述的支持程度，不构成对现实事实的权威认证。",
-        "> 仅包含已授权且经人工批准的脱敏证据；使用前仍需项目成员复核。",
+        "> 仅包含已授权且未被人工排除的脱敏证据；使用前仍需项目成员复核。",
         "",
     ]
     description = str(project_data.get("description", "")).strip()
     if description:
         lines.extend(("## 项目说明", "", description, ""))
 
+    lines.extend(render_outcome_outline_markdown(
+        build_outcome_outline(project_data, claim_rows, task_rows)
+    ).splitlines())
+    lines.append("")
     lines.extend(("## 已核验结论", ""))
     if not claim_rows:
         lines.extend(("暂无已核验结论。", ""))
@@ -197,7 +204,7 @@ def render_project_markdown(
         for evidence_id in evidence_ids
     }
     if not cited_ids:
-        lines.extend(("暂无可导出的已批准证据。", ""))
+        lines.extend(("暂无可导出的可引用证据。", ""))
     for evidence_id in sorted(cited_ids):
         evidence = safe_evidence[evidence_id]
         evidence_type = _enum_value(evidence.get("evidence_type"))
