@@ -13,6 +13,7 @@ from qingji.evaluation import (
     run_project_retrieval_eval,
 )
 from qingji.export import export_project_markdown
+from qingji.report import build_outcome_outline, render_outcome_outline_markdown
 from qingji.ui import (
     TASK_STATUS_LABELS,
     VERDICT_ICONS,
