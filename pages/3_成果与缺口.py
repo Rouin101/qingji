@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 import streamlit as st
 
-from qingji.artifacts import EXPORT_FORMAT_LABELS, export_project_files
+from qingji.artifacts import EXPORT_FORMAT_LABELS
 from qingji.evaluation import (
     build_eval_history_rows,
     build_eval_template,
@@ -16,6 +17,10 @@ from qingji.evaluation import (
     run_project_retrieval_eval,
 )
 from qingji.export import export_project_markdown
+from qingji.presentation import (
+    EXPORT_PROFILE_LABELS,
+    export_project_report_files,
+)
 from qingji.report import build_outcome_outline, render_outcome_outline_markdown
 from qingji.ui import (
     TASK_STATUS_LABELS,
@@ -359,86 +364,110 @@ with tab_mapping:
 with tab_export:
     st.markdown("### 导出可信成果")
     st.caption(
-        "可按需生成 Markdown、Word 或 PDF。文件会写入项目的 output 文件夹；"
-        "导出仅包含已脱敏、已确认授权且未被人工排除的证据引用。"
+        "成果报告版只写入你勾选的结论与任务；完整审计版保留当前项目的完整证据链。"
+        "两种版本均只引用已脱敏、已确认授权且未被人工排除的证据。"
     )
-    try:
-        markdown_output = export_project_markdown(db, project_id)
-    except Exception as exc:
-        st.error(f"生成导出内容失败：{exc}")
-        markdown_output = ""
-
-    if markdown_output:
-        selected_export_formats = st.multiselect(
-            "选择导出格式",
-            options=["markdown", "docx", "pdf"],
-            default=["markdown", "docx", "pdf"],
-            format_func=lambda item: EXPORT_FORMAT_LABELS[item],
-            key=f"project_export_formats_{project_id}",
+    export_profile = st.radio(
+        "导出版本", options=["report", "audit"],
+        format_func=lambda item: EXPORT_PROFILE_LABELS[item], horizontal=True,
+        key=f"project_export_profile_{project_id}",
+    )
+    selected_export_formats = st.multiselect(
+        "选择导出格式", options=["markdown", "docx", "pdf"],
+        default=["markdown", "docx", "pdf"],
+        format_func=lambda item: EXPORT_FORMAT_LABELS[item],
+        key=f"project_export_formats_{project_id}",
+    )
+    title = team_name = author = report_date = ""
+    selected_claim_ids = selected_task_ids = None
+    if export_profile == "report":
+        st.markdown("#### 报告信息")
+        title = st.text_input(
+            "报告标题", value=f"{project.get('name', '未命名项目')}成果报告",
+            key=f"project_report_title_{project_id}",
         )
-        if st.button(
-            "生成所选文件到 output 文件夹",
-            type="primary",
-            disabled=not selected_export_formats,
-            key=f"generate_project_export_{project_id}",
-            width="stretch",
-        ):
-            try:
-                with st.spinner("正在生成导出文件……"):
-                    generated_files = export_project_files(
-                        db, project_id, selected_export_formats
-                    )
-            except Exception as exc:
-                st.error(f"生成导出文件失败：{exc}")
-            else:
-                st.session_state[
-                    f"project_export_files_{project_id}"
-                ] = {
-                    export_format: str(path)
-                    for export_format, path in generated_files.items()
-                }
-                st.success(
-                    "已生成：" + "、".join(
-                        EXPORT_FORMAT_LABELS[item]
-                        for item in generated_files
-                    )
-                )
-
-        generated_paths = st.session_state.get(
-            f"project_export_files_{project_id}", {}
+        metadata_columns = st.columns(3)
+        team_name = metadata_columns[0].text_input(
+            "团队名称（可选）", key=f"project_report_team_{project_id}"
         )
-        download_meta = {
-            "markdown": ("下载 Markdown", "text/markdown"),
-            "docx": (
-                "下载 Word 文档",
-                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            ),
-            "pdf": ("下载 PDF", "application/pdf"),
-        }
-        for export_format in selected_export_formats:
-            path_value = generated_paths.get(export_format)
-            artifact_path = Path(path_value) if path_value else None
-            if artifact_path is None or not artifact_path.is_file():
-                continue
-            label, mime = download_meta[export_format]
-            st.download_button(
-                label,
-                data=artifact_path.read_bytes(),
-                file_name=artifact_path.name,
-                mime=mime,
-                key=f"download_project_export_{project_id}_{export_format}",
-                width="stretch",
-            )
-            st.caption(f"已保存到：{artifact_path}")
-        with st.expander("预览导出内容"):
-            st.code(markdown_output, language="markdown")
+        author = metadata_columns[1].text_input(
+            "作者（可选）", key=f"project_report_author_{project_id}"
+        )
+        report_date = str(metadata_columns[2].date_input(
+            "报告日期", value=date.today(), key=f"project_report_date_{project_id}"
+        ))
+        claim_options = [int(item["id"]) for item in claims]
+        task_options = [int(item["id"]) for item in tasks]
+        selected_claim_ids = st.multiselect(
+            "纳入报告的结论", options=claim_options, default=claim_options,
+            format_func=lambda item: next(
+                f"C{row['id']} · {row.get('claim_text') or '未命名结论'}"
+                for row in claims if int(row["id"]) == int(item)
+            ), key=f"project_report_claims_{project_id}",
+        )
+        selected_task_ids = st.multiselect(
+            "纳入报告的补证任务", options=task_options, default=task_options,
+            format_func=lambda item: next(
+                f"T{row['id']} · {row.get('title') or '补证任务'}"
+                for row in tasks if int(row["id"]) == int(item)
+            ), key=f"project_report_tasks_{project_id}",
+        )
+        st.caption("成果报告会写入核验概览、材料时间线、选中结论、补证任务和可追溯证据附录。")
     else:
-        empty_state("当前没有可导出的内容。")
+        st.info("完整审计版固定导出当前项目的全部核验记录、证据目录、审核变更日志和补证任务。")
 
-    st.warning(
-        "导出不是事实认证。正式使用前仍需项目成员回看原材料、授权记录和来源定位。"
-    )
+    if st.button(
+        "生成所选文件到 output 文件夹", type="primary",
+        disabled=not selected_export_formats,
+        key=f"generate_project_export_{project_id}", width="stretch",
+    ):
+        try:
+            with st.spinner("正在生成导出文件……"):
+                generated_files = export_project_report_files(
+                    db, project_id, selected_export_formats, profile=export_profile,
+                    title=title, team_name=team_name, author=author,
+                    report_date=report_date, claim_ids=selected_claim_ids,
+                    task_ids=selected_task_ids,
+                )
+        except Exception as exc:
+            st.error(f"生成导出文件失败：{exc}")
+        else:
+            st.session_state[f"project_export_files_{project_id}"] = {
+                export_format: str(file_path)
+                for export_format, file_path in generated_files.items()
+            }
+            st.success("已生成：" + "、".join(
+                EXPORT_FORMAT_LABELS[item] for item in generated_files
+            ))
 
+    generated_paths = st.session_state.get(f"project_export_files_{project_id}", {})
+    download_meta = {
+        "markdown": ("下载 Markdown", "text/markdown"),
+        "docx": ("下载 Word 文档", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+        "pdf": ("下载 PDF", "application/pdf"),
+    }
+    for export_format in selected_export_formats:
+        path_value = generated_paths.get(export_format)
+        artifact_path = Path(path_value) if path_value else None
+        if artifact_path is None or not artifact_path.is_file():
+            continue
+        label, mime = download_meta[export_format]
+        st.download_button(
+            label, data=artifact_path.read_bytes(), file_name=artifact_path.name,
+            mime=mime, key=f"download_project_export_{project_id}_{export_format}",
+            width="stretch",
+        )
+        st.caption(f"已保存到：{artifact_path}")
+
+    if export_profile == "audit":
+        try:
+            audit_preview = export_project_markdown(db, project_id)
+        except Exception:
+            audit_preview = ""
+        if audit_preview:
+            with st.expander("预览完整审计版内容"):
+                st.code(audit_preview, language="markdown")
+    st.warning("导出不是事实认证。正式使用前仍需项目成员回看原材料、授权记录和来源定位。")
 with tab_eval:
     st.markdown("### 自定义检索评测")
     st.caption(

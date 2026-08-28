@@ -119,7 +119,7 @@ def _append_markdown_runs(paragraph: Any, text: str) -> None:
         run.bold = bold
 
 
-def render_markdown_to_docx(markdown: str, destination: str | Path) -> Path:
+def render_markdown_to_docx(markdown: str, destination: str | Path, *, visual_path: str | Path | None = None) -> Path:
     """Render trusted Markdown using the standard_business_brief token set."""
 
     from docx import Document
@@ -204,6 +204,11 @@ def render_markdown_to_docx(markdown: str, destination: str | Path) -> Path:
     subtitle_paragraph = document.add_paragraph(style=subtitle)
     subtitle_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
     subtitle_paragraph.add_run("项目成果、证据与缺口可信导出")
+    if visual_path and Path(visual_path).is_file():
+        document.add_picture(str(visual_path), width=Inches(6.3))
+        document.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
+        visual_caption = document.add_paragraph("项目概览图与材料时间线", style="Qingji Note")
+        visual_caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
     skipped_title = False
     for raw_line in lines:
@@ -326,12 +331,12 @@ def _pdf_header_footer(canvas: Any, document: Any) -> None:
     canvas.restoreState()
 
 
-def render_markdown_to_pdf(markdown: str, destination: str | Path) -> Path:
+def render_markdown_to_pdf(markdown: str, destination: str | Path, *, visual_path: str | Path | None = None) -> Path:
     """Render trusted Markdown as a readable, local PDF."""
 
     from reportlab.lib.pagesizes import letter
     from reportlab.lib.units import inch
-    from reportlab.platypus import ListFlowable, ListItem, Paragraph, SimpleDocTemplate, Spacer
+    from reportlab.platypus import Image as PdfImage, ListFlowable, ListItem, Paragraph, SimpleDocTemplate
 
     target = Path(destination)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -343,6 +348,12 @@ def render_markdown_to_pdf(markdown: str, destination: str | Path) -> Path:
         title="青迹可信证据导出", author="青迹",
     )
     story: list[Any] = []
+    if visual_path and Path(visual_path).is_file():
+        visual = PdfImage(str(visual_path))
+        visual.drawWidth = 6.25 * inch
+        visual.drawHeight = visual.imageHeight * visual.drawWidth / visual.imageWidth
+        story.append(visual)
+        story.append(Paragraph("项目概览图与材料时间线", styles["subtitle"]))
     lines = markdown.splitlines()
     skipped_title = False
     for raw_line in lines:
