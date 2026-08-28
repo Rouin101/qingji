@@ -92,6 +92,7 @@ try:
     db, project_id, project = get_demo_context()
     claims = db.list_claims(project_id)
     tasks = db.list_followup_tasks(project_id=project_id)
+    materials = db.list_materials(project_id)
     stats = db.get_project_stats(project_id)
 except Exception as exc:
     st.error(f"读取成果数据失败：{exc}")
@@ -115,9 +116,26 @@ summary_columns[3].metric(
     "已完成补证", sum(task.get("status") == "done" for task in tasks)
 )
 
-tab_claims, tab_tasks, tab_mapping, tab_export, tab_eval = st.tabs(
-    ["已核验结论", "补证任务", "证据对应表", "可信导出", "检索评测"]
+tab_overview, tab_claims, tab_tasks, tab_mapping, tab_export, tab_eval = st.tabs(
+    ["概览图表", "已核验结论", "补证任务", "证据对应表", "可信导出", "检索评测"]
 )
+
+with tab_overview:
+    st.markdown("### 项目概览图表")
+    verdict_rows = [
+        {"核验状态": VERDICT_LABELS[key], "结论数量": sum(item.get("verdict") == key for item in claims)}
+        for key in ["supported", "partially_supported", "unsupported", "contradicted"]
+    ]
+    st.bar_chart(verdict_rows, x="核验状态", y="结论数量", horizontal=True)
+    st.markdown("#### 材料时间线")
+    timeline_rows = [
+        {"日期": item.get("captured_at") or item.get("created_at") or "未记录", "材料": item.get("original_filename") or f"M{item.get('id', '—')}", "来源角色": item.get("source_role") or "未记录", "授权": item.get("consent_status") or "未记录"}
+        for item in materials
+    ]
+    if timeline_rows:
+        st.dataframe(sorted(timeline_rows, key=lambda item: str(item["日期"])), width="stretch", hide_index=True)
+    else:
+        empty_state("尚无可展示的材料时间线。")
 
 with tab_claims:
     st.markdown("### 已核验结论")
