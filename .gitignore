@@ -19,6 +19,11 @@ data/*.jsonl
 !data/raw/.gitkeep
 !data/redacted/.gitkeep
 
+# Generated exports (may contain derived research material)
+output/*
+!output/.gitkeep
+tmp/
+
 # Streamlit
 .streamlit/secrets.toml
 

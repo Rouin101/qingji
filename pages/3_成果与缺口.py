@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import streamlit as st
 
+from qingji.artifacts import EXPORT_FORMAT_LABELS, export_project_files
 from qingji.evaluation import (
     build_eval_history_rows,
     build_eval_template,
@@ -354,9 +357,10 @@ with tab_mapping:
         empty_state("尚无结论—证据关系。")
 
 with tab_export:
-    st.markdown("### 导出可信 Markdown")
+    st.markdown("### 导出可信成果")
     st.caption(
-        "导出仅包含已脱敏、已授权、已审核的证据引用，并保留来源边界和未解决缺口。"
+        "可按需生成 Markdown、Word 或 PDF。文件会写入项目的 output 文件夹；"
+        "导出仅包含已脱敏、已确认授权且未被人工排除的证据引用。"
     )
     try:
         markdown_output = export_project_markdown(db, project_id)
@@ -365,14 +369,67 @@ with tab_export:
         markdown_output = ""
 
     if markdown_output:
-        st.download_button(
-            "下载 Markdown",
-            data=markdown_output.encode("utf-8"),
-            file_name=f"青迹_项目{project_id}_可信导出.md",
-            mime="text/markdown",
-            type="primary",
-            width="stretch",
+        selected_export_formats = st.multiselect(
+            "选择导出格式",
+            options=["markdown", "docx", "pdf"],
+            default=["markdown", "docx", "pdf"],
+            format_func=lambda item: EXPORT_FORMAT_LABELS[item],
+            key=f"project_export_formats_{project_id}",
         )
+        if st.button(
+            "生成所选文件到 output 文件夹",
+            type="primary",
+            disabled=not selected_export_formats,
+            key=f"generate_project_export_{project_id}",
+            width="stretch",
+        ):
+            try:
+                with st.spinner("正在生成导出文件……"):
+                    generated_files = export_project_files(
+                        db, project_id, selected_export_formats
+                    )
+            except Exception as exc:
+                st.error(f"生成导出文件失败：{exc}")
+            else:
+                st.session_state[
+                    f"project_export_files_{project_id}"
+                ] = {
+                    export_format: str(path)
+                    for export_format, path in generated_files.items()
+                }
+                st.success(
+                    "已生成：" + "、".join(
+                        EXPORT_FORMAT_LABELS[item]
+                        for item in generated_files
+                    )
+                )
+
+        generated_paths = st.session_state.get(
+            f"project_export_files_{project_id}", {}
+        )
+        download_meta = {
+            "markdown": ("下载 Markdown", "text/markdown"),
+            "docx": (
+                "下载 Word 文档",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ),
+            "pdf": ("下载 PDF", "application/pdf"),
+        }
+        for export_format in selected_export_formats:
+            path_value = generated_paths.get(export_format)
+            artifact_path = Path(path_value) if path_value else None
+            if artifact_path is None or not artifact_path.is_file():
+                continue
+            label, mime = download_meta[export_format]
+            st.download_button(
+                label,
+                data=artifact_path.read_bytes(),
+                file_name=artifact_path.name,
+                mime=mime,
+                key=f"download_project_export_{project_id}_{export_format}",
+                width="stretch",
+            )
+            st.caption(f"已保存到：{artifact_path}")
         with st.expander("预览导出内容"):
             st.code(markdown_output, language="markdown")
     else:

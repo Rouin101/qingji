@@ -113,9 +113,7 @@ def render_project_markdown(
     safe_evidence: dict[int, dict[str, Any]] = {}
     for row in evidence_cards:
         data = _row_dict(row)
-        review = _enum_value(data.get("review_status"))
-        consent = _enum_value(data.get("consent_status", "confirmed"))
-        if review != "approved" or consent != "confirmed":
+        if not is_retrievable_evidence(data):
             continue
         try:
             evidence_id = int(data["id"])
