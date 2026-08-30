@@ -102,6 +102,17 @@ class MaterialEvidenceCoverageResult:
     evidence_card_ids: tuple[int, ...]
 
 
+@dataclass(frozen=True)
+class MaterialModelRetryResult:
+    """Idempotent recovery result for one already-persisted material."""
+
+    material_id: int
+    evidence_card_ids: tuple[int, ...] = ()
+    claim_candidate_ids: tuple[int, ...] = ()
+    skipped_steps: tuple[str, ...] = ()
+    errors: tuple[str, ...] = ()
+
+
 def _status_value(value: Any) -> str:
     return getattr(value, "value", value) if value is not None else ""
 
@@ -347,7 +358,7 @@ def import_text_material(
                 )
                 warnings.append(
                     "语义整理未完成，本次不会使用本地规则生成证据卡。"
-                    "请检查模型服务后重新导入或重新整理材料。"
+                    "材料和脱敏片段已保存，可在模型运行中心恢复处理。"
                 )
         else:
             warnings.append(
@@ -424,7 +435,7 @@ def import_text_material(
                 error_message=str(exc)[:500],
             )
             warnings.append(
-                "结论候选提取未完成；证据卡仍可正常审核，稍后可重新导入材料。"
+                "结论候选提取未完成；证据卡仍可正常审核，稍后可在模型运行中心恢复处理。"
             )
     return MaterialImportResult(
         material_id=material_id,
@@ -432,6 +443,226 @@ def import_text_material(
         evidence_card_ids=evidence_card_ids,
         claim_candidate_ids=claim_candidate_ids,
         warnings=warnings,
+    )
+
+
+def retry_material_model_processing(
+    db: Any,
+    project_id: int,
+    material_id: int,
+    *,
+    retry_evidence: bool = True,
+    retry_claim_candidates: bool = True,
+    retry_of_run_id: int | None = None,
+) -> MaterialModelRetryResult:
+    """Resume model work for a persisted material without importing it again.
+
+    Evidence recovery creates cards only for source segments that never had a
+    card. Claim-candidate recovery deduplicates on text and source segment IDs.
+    The steps are isolated so one provider failure keeps the other's result.
+    """
+
+    project_id = int(project_id)
+    material_id = int(material_id)
+    material = db.get_material(material_id)
+    if material is None or int(material.get("project_id") or 0) != project_id:
+        raise ValueError(f"材料 M{material_id} 不属于当前项目。")
+    if _status_value(material.get("consent_status")) != ConsentStatus.CONFIRMED.value:
+        raise ValueError(f"材料 M{material_id} 尚未确认授权，不能发送给模型。")
+    if not llm_settings.configured:
+        raise ValueError("尚未配置可用的大模型，请配置 .env 并重启 Streamlit。")
+
+    segments = db.list_segments(material_id)
+    if not segments:
+        raise ValueError(f"材料 M{material_id} 没有可恢复处理的脱敏片段。")
+
+    created_evidence_ids: list[int] = []
+    created_candidate_ids: list[int] = []
+    skipped: list[str] = []
+    errors: list[str] = []
+    common_input: dict[str, Any] = {
+        "material_id": material_id,
+        "segment_count": len(segments),
+        "model": llm_settings.model,
+        "provider": llm_settings.provider,
+    }
+    if retry_of_run_id is not None:
+        common_input["retry_of_run_id"] = int(retry_of_run_id)
+
+    if retry_evidence:
+        existing_segment_ids = {
+            int(card["segment_id"])
+            for card in db.list_evidence_cards(project_id)
+            if int(card.get("material_id") or 0) == material_id
+        }
+        missing_segments = [
+            segment
+            for segment in segments
+            if int(segment["id"]) not in existing_segment_ids
+        ]
+        if not missing_segments:
+            skipped.append("evidence_cards_complete")
+        else:
+            run_input = {
+                **common_input,
+                "missing_segment_ids": [int(item["id"]) for item in missing_segments],
+            }
+            try:
+                model_segments, full_card_segments = _model_generation_candidates(
+                    material_id,
+                    missing_segments,
+                    str(material.get("source_role") or ""),
+                )
+                advice = request_evidence_card_generation(
+                    model_segments,
+                    consent_status=material.get("consent_status"),
+                    source_role=str(material.get("source_role") or ""),
+                    context=str(material.get("context") or ""),
+                    max_cards=len(missing_segments),
+                    require_full_segment_coverage=True,
+                )
+                drafts = _model_card_drafts(material_id, full_card_segments, advice)
+                if len(drafts) != len(missing_segments):
+                    raise ValueError(f"材料 M{material_id} 未能覆盖全部缺失片段。")
+                for draft in drafts:
+                    created_evidence_ids.append(
+                        db.create_evidence_card(
+                            project_id,
+                            draft.segment_id,
+                            draft.evidence_type,
+                            draft.title,
+                            draft.quote,
+                            draft.summary,
+                            source_locator=draft.source_locator,
+                            review_status=ReviewStatus.DRAFT.value,
+                        )
+                    )
+                db.create_agent_run(
+                    project_id,
+                    "llm_evidence_card_generation",
+                    status="completed",
+                    input_data={**run_input, "resumed": True},
+                    output_data={
+                        "evidence_card_ids": created_evidence_ids,
+                        **advice.as_dict(),
+                    },
+                )
+            except (LLMError, ValueError, KeyError) as exc:
+                errors.append(f"证据卡恢复失败：{exc}")
+                db.create_agent_run(
+                    project_id,
+                    "llm_evidence_card_generation",
+                    status="failed",
+                    input_data={**run_input, "resumed": True},
+                    error_message=str(exc)[:500],
+                )
+
+    if retry_claim_candidates:
+        existing_candidates = [
+            item
+            for item in db.list_claim_candidates(project_id)
+            if int(item.get("material_id") or 0) == material_id
+        ]
+        existing_keys = {
+            (
+                str(item.get("claim_text") or "").strip(),
+                tuple(int(value) for value in item.get("source_segment_ids") or ()),
+            )
+            for item in existing_candidates
+        }
+        if existing_candidates:
+            skipped.append("claim_candidates_complete")
+            retry_claim_candidates = False
+    if retry_claim_candidates:
+        existing_candidates = []
+        existing_keys: set[tuple[str, tuple[int, ...]]] = set()
+        run_input = {**common_input, "existing_candidate_count": len(existing_keys)}
+        try:
+            advice = request_material_claim_candidates(
+                segments,
+                source_role=str(material.get("source_role") or ""),
+                context=str(material.get("context") or ""),
+                config=llm_settings,
+            )
+            for candidate in advice.candidates:
+                key = (
+                    candidate.claim_text.strip(),
+                    tuple(int(value) for value in candidate.segment_ids),
+                )
+                if key in existing_keys:
+                    continue
+                created_candidate_ids.append(
+                    db.create_claim_candidate(
+                        project_id,
+                        material_id,
+                        candidate.claim_text,
+                        source_segment_ids=candidate.segment_ids,
+                        model=advice.model,
+                        uncertainties=advice.uncertainties,
+                    )
+                )
+                existing_keys.add(key)
+            db.create_agent_run(
+                project_id,
+                "llm_material_claim_candidate_generation",
+                status="completed",
+                input_data={**run_input, "resumed": True},
+                output_data={
+                    "claim_candidate_ids": created_candidate_ids,
+                    "candidate_count": len(created_candidate_ids),
+                    "uncertainties": list(advice.uncertainties),
+                    "model": advice.model,
+                },
+            )
+        except (LLMError, ValueError, KeyError) as exc:
+            errors.append(f"结论候选恢复失败：{exc}")
+            db.create_agent_run(
+                project_id,
+                "llm_material_claim_candidate_generation",
+                status="failed",
+                input_data={**run_input, "resumed": True},
+                error_message=str(exc)[:500],
+            )
+
+    if created_evidence_ids:
+        recheck_project_claims(db, project_id)
+    return MaterialModelRetryResult(
+        material_id=material_id,
+        evidence_card_ids=tuple(created_evidence_ids),
+        claim_candidate_ids=tuple(created_candidate_ids),
+        skipped_steps=tuple(skipped),
+        errors=tuple(errors),
+    )
+
+
+def retry_failed_model_run(
+    db: Any, project_id: int, run_id: int
+) -> MaterialModelRetryResult:
+    """Retry a failed material-generation run from the model run center."""
+
+    run = db.get_agent_run(int(run_id))
+    if run is None or int(run.get("project_id") or 0) != int(project_id):
+        raise ValueError("模型运行记录不存在或不属于当前项目。")
+    if str(run.get("status") or "") != "failed":
+        raise ValueError("只有失败的模型运行可以重试。")
+    run_type = str(run.get("run_type") or "")
+    supported_types = {
+        "llm_evidence_card_generation",
+        "llm_evidence_card_full_coverage",
+        "llm_material_claim_candidate_generation",
+    }
+    if run_type not in supported_types:
+        raise ValueError("这类模型运行暂不支持自动重试。")
+    material_id = int((run.get("input") or {}).get("material_id") or 0)
+    if material_id <= 0:
+        raise ValueError("运行记录缺少材料编号，不能安全重试。")
+    return retry_material_model_processing(
+        db,
+        int(project_id),
+        material_id,
+        retry_evidence=run_type != "llm_material_claim_candidate_generation",
+        retry_claim_candidates=run_type != "llm_evidence_card_full_coverage",
+        retry_of_run_id=int(run_id),
     )
 
 

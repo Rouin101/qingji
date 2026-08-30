@@ -22,6 +22,8 @@ import os
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
@@ -39,6 +41,12 @@ from qingji.backup import (  # noqa: E402
 )
 from qingji.db import Database  # noqa: E402
 from qingji.export import export_project_markdown  # noqa: E402
+from qingji.llm import (  # noqa: E402
+    EvidenceCardGenerationAdvice,
+    EvidenceCardGenerationItem,
+    LLMError,
+    MaterialClaimCandidateAdvice,
+)
 
 IMPORT_TEXT = (
     "受访者甲说：我第一次使用线上便民平台时，不知道验证码填在哪里，"
@@ -46,6 +54,24 @@ IMPORT_TEXT = (
 )
 GROUP_CLAIM = "当地居民普遍认为线上办事平台使用困难。"
 MATERIAL_FILENAME = "材料_新访谈_已授权.txt"
+
+
+def _offline_card_generation(segments, *, max_cards: int, **_kwargs):
+    return EvidenceCardGenerationAdvice(
+        cards=tuple(
+            EvidenceCardGenerationItem(
+                segment_ids=(int(segment["id"]),),
+                title="首次使用线上平台时需要协助",
+                summary="一名受访者首次使用线上平台时需要志愿者帮助。",
+                evidence_type="interview_statement",
+                uncertainties=(),
+            )
+            for segment in segments[:max_cards]
+        ),
+        uncertainties=(),
+        model="offline-e2e-model",
+        chunk_count=1,
+    )
 
 
 def _expect_no_exception(app: AppTest, step: str) -> None:
@@ -76,7 +102,7 @@ def _approved_card_count() -> int:
     )
 
 
-def _newest_draft_card_id() -> int:
+def _draft_card_ids() -> list[int]:
     database = _db()
     project = database.get_project_by_name(
         "数字便民服务体验调研"
@@ -86,7 +112,7 @@ def _newest_draft_card_id() -> int:
         int(project["id"]), review_status="draft"
     )
     assert drafts, "导入后应生成待审核证据卡"
-    return int(drafts[0]["id"])
+    return [int(item["id"]) for item in drafts]
 
 
 def step_import_and_approve(app: AppTest) -> None:
@@ -107,26 +133,28 @@ def step_import_and_approve(app: AppTest) -> None:
     _expect_no_exception(app, "导入材料")
     assert any("已保存" in text for text in _success_texts(app)), _success_texts(app)
 
-    card_id = _newest_draft_card_id()
-    app.radio(key=f"decision_{card_id}").set_value("approved")
-    app.text_area(key=f"review_reason_{card_id}").set_value(
-        "已核对材料来源与授权。"
-    )
-    app.button(
-        key=f"FormSubmitter:evidence_edit_{card_id}-保存审核结果"
-    ).click()
-    app.run()
-    _expect_no_exception(app, "批准证据卡")
-    assert _approved_card_count() == 4, "基础 3 张 + 新导入 1 张应全部已批准"
+    card_ids = _draft_card_ids()
+    for card_id in card_ids:
+        app.radio(key=f"decision_{card_id}").set_value("approved")
+        app.text_area(key=f"review_reason_{card_id}").set_value(
+            "已核对材料来源与授权。"
+        )
+        app.button(
+            key=f"FormSubmitter:evidence_edit_{card_id}-保存审核结果"
+        ).click()
+        app.run()
+        _expect_no_exception(app, f"批准证据卡 E{card_id}")
+    assert _approved_card_count() == 3 + len(card_ids), "全部新卡应完成人工批准"
     database = _db()
     project = database.get_project_by_name(
         "数字便民服务体验调研"
     )
-    events = database.list_evidence_review_events(
-        int(project["id"]), evidence_card_id=card_id
-    )
-    assert len(events) == 1, "人工批准应生成一条审核历史"
-    assert events[0]["change_reason"].startswith("已核对材料")
+    for card_id in card_ids:
+        events = database.list_evidence_review_events(
+            int(project["id"]), evidence_card_id=card_id
+        )
+        assert len(events) == 1, "每张人工批准卡应生成一条审核历史"
+        assert events[0]["change_reason"].startswith("已核对材料")
 
 
 def step_check_claim(app: AppTest) -> None:
@@ -155,12 +183,23 @@ def step_check_claim(app: AppTest) -> None:
 
 
 def step_supplement_and_recheck(app: AppTest) -> None:
-    app.button[1].click()  # 加入不同观点材料
+    database = _db()
+    project = database.get_project_by_name("数字便民服务体验调研")
+    claim = next(
+        item
+        for item in database.list_claims(int(project["id"]))
+        if item["claim_text"] == GROUP_CLAIM
+    )
+    app.button(
+        key=f"add_demo_supplement_{project['id']}_{claim['id']}"
+    ).click()
     app.run()
     _expect_no_exception(app, "加入补充材料")
     assert any("已加入" in text for text in _success_texts(app)), _success_texts(app)
 
-    app.button[2].click()  # 重新核验当前结论
+    app.button(
+        key=f"recheck_claim_{project['id']}_{claim['id']}"
+    ).click()
     app.run()
     app.run()  # the handler calls st.rerun(), settle one extra pass
     _expect_no_exception(app, "重新核验")
@@ -228,11 +267,32 @@ def main() -> None:
     _expect_no_exception(app, "启动应用")
     print("数据库目录：", _DATA_DIR)
 
-    step_import_and_approve(app)
+    configured = SimpleNamespace(
+        configured=True,
+        model="offline-e2e-model",
+        provider="offline-test",
+        max_context_chars=12000,
+    )
+    with patch("qingji.workflow.llm_settings", configured), patch(
+        "qingji.workflow.request_evidence_card_generation",
+        side_effect=_offline_card_generation,
+    ), patch(
+        "qingji.workflow.request_material_claim_candidates",
+        return_value=MaterialClaimCandidateAdvice(
+            candidates=(), uncertainties=(), model="offline-e2e-model"
+        ),
+    ), patch(
+        "qingji.workflow.request_claim_evidence_review",
+        side_effect=LLMError("E2E 使用本地规则，不调用外部语义复核"),
+    ):
+        step_import_and_approve(app)
     print("[OK] 材料导入与证据批准通过")
-    step_check_claim(app)
-    print("[OK] 结论核验（部分支持 + 补证任务）通过")
-    step_supplement_and_recheck(app)
+    with patch(
+        "qingji.workflow.llm_settings", SimpleNamespace(configured=False)
+    ):
+        step_check_claim(app)
+        print("[OK] 结论核验（部分支持 + 补证任务）通过")
+        step_supplement_and_recheck(app)
     print("[OK] 补充观点与重新核验（存在冲突）通过")
     step_export(app)
     print("[OK] Markdown 可信导出通过")

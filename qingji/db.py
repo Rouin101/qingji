@@ -1465,6 +1465,41 @@ class Database:
             ).fetchone()
         return self._row(row)
 
+    def get_agent_run(self, run_id: int) -> dict[str, Any] | None:
+        return self._get("agent_runs", int(run_id))
+
+    def list_model_runs(
+        self,
+        project_id: int,
+        *,
+        status: str | None = None,
+        run_type: str | None = None,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        """Return project-local LLM runs for the model operations center."""
+
+        if isinstance(limit, bool) or not isinstance(limit, int):
+            raise ValueError("limit must be an integer")
+        if limit < 1 or limit > 500:
+            raise ValueError("limit must be between 1 and 500")
+        clauses = ["project_id = ?", "run_type LIKE 'llm_%'"]
+        params: list[Any] = [int(project_id)]
+        if status is not None:
+            clauses.append("status = ?")
+            params.append(str(status))
+        if run_type is not None:
+            clauses.append("run_type = ?")
+            params.append(str(run_type))
+        params.append(limit)
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM agent_runs WHERE "
+                + " AND ".join(clauses)
+                + " ORDER BY id DESC LIMIT ?",
+                params,
+            ).fetchall()
+        return self._rows(rows)
+
     def get_latest_project_run(
         self, project_id: int, run_type: str
     ) -> dict[str, Any] | None:

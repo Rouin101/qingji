@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import os
+from unittest.mock import patch
 from pathlib import Path
 
-from qingji.config import _load_dotenv
+from qingji.config import LLMSettings, _load_dotenv
 
 
 class DotenvLoadingTests(unittest.TestCase):
@@ -26,6 +28,22 @@ class DotenvLoadingTests(unittest.TestCase):
         self.assertEqual(environment["QINGJI_LLM_ENABLED"], "true")
         self.assertEqual(environment["QINGJI_LLM_API_KEY"], "local-key")
         self.assertEqual(environment["QINGJI_LLM_MODEL"], "system-model")
+
+    def test_llm_settings_load_provider_for_run_auditing(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "QINGJI_LLM_ENABLED": "true",
+                "QINGJI_LLM_PROVIDER": "deepseek",
+                "QINGJI_LLM_BASE_URL": "https://api.deepseek.com",
+                "QINGJI_LLM_API_KEY": "test-key",
+                "QINGJI_LLM_MODEL": "test-model",
+            },
+        ):
+            configured = LLMSettings.from_env()
+
+        self.assertTrue(configured.configured)
+        self.assertEqual(configured.provider, "deepseek")
 
 
 if __name__ == "__main__":

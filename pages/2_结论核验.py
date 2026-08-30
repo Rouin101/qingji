@@ -604,11 +604,13 @@ if demo_mode:
             "加入不同观点材料",
             type="primary",
             width="stretch",
+            key=f"add_demo_supplement_{project_id}_{active_claim_id}",
         )
     with action_right:
         rerun_check = st.button(
             "重新核验当前结论",
             width="stretch",
+            key=f"recheck_claim_{project_id}_{active_claim_id}",
         )
 else:
     add_supplement = False
@@ -620,6 +622,7 @@ else:
         "重新核验当前结论",
         type="primary",
         width="stretch",
+        key=f"recheck_claim_{project_id}_{active_claim_id}",
     )
 
 if add_supplement:

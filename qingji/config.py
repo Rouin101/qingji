@@ -104,6 +104,7 @@ class LLMSettings:
     model: str
     timeout_seconds: float
     max_context_chars: int
+    provider: str = "openai_compatible"
 
     @classmethod
     def from_env(cls) -> "LLMSettings":
@@ -130,6 +131,10 @@ class LLMSettings:
             model=os.getenv("QINGJI_LLM_MODEL", "").strip(),
             timeout_seconds=timeout_seconds,
             max_context_chars=max_context_chars,
+            provider=(
+                os.getenv("QINGJI_LLM_PROVIDER", "openai_compatible").strip()
+                or "openai_compatible"
+            ),
         )
 
     @property

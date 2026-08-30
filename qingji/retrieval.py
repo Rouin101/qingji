@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import re
+from collections import Counter
 from dataclasses import dataclass, replace
 from typing import Any, Mapping
 
@@ -16,6 +17,8 @@ from .models import (
 
 
 _SEMANTIC_REPLACEMENTS: tuple[tuple[str, str], ...] = (
+    ("线上便民平台", "线上办事平台"),
+    ("线上平台", "线上办事平台"),
     ("网上", "线上"),
     ("在线", "线上"),
     ("办事系统", "办事平台"),
@@ -25,8 +28,22 @@ _SEMANTIC_REPLACEMENTS: tuple[tuple[str, str], ...] = (
     ("不会操作", "使用困难"),
     ("操作不便", "使用困难"),
     ("难以使用", "使用困难"),
+    ("协助", "帮助"),
     ("年纪较大", "年长"),
     ("老年人", "年长者"),
+    ("二维码", "扫码"),
+    ("自助设备", "自助终端"),
+    ("在线表格", "电子表单"),
+    ("文件上传", "附件上传"),
+    ("账户", "账号"),
+    ("办理进展", "办理状态"),
+    ("状态查询", "进度查询"),
+    ("路标", "指示牌"),
+    ("座位", "座椅"),
+    ("大号字体", "大字版"),
+    ("预约通知", "预约提醒"),
+    ("准时", "按时"),
+    ("流程讲解", "步骤说明"),
 )
 
 _KEYWORD_CANONICAL: tuple[str, ...] = (
@@ -94,7 +111,7 @@ def normalize_semantics(text: str) -> str:
     return re.sub(r"[\s\u3000，。！？；：、,.!?;:'\"“”‘’（）()\[\]【】\-_/]+", "", normalized)
 
 
-def chinese_ngrams(text: str, sizes: tuple[int, ...] = (2, 3)) -> set[str]:
+def chinese_ngrams(text: str, sizes: tuple[int, ...] = (2, 3, 4)) -> set[str]:
     normalized = normalize_semantics(text)
     cjk_runs = re.findall(r"[\u3400-\u9fff]+", normalized)
     output: set[str] = set()
@@ -169,13 +186,14 @@ def is_retrievable(candidate: EvidenceCandidate) -> bool:
 
 
 def _candidate_text(candidate: EvidenceCandidate) -> str:
+    # Project metadata such as "受访者" or one shared collection context is
+    # repeated across many cards. Including it in lexical scoring creates false
+    # independent support, so ranking uses only the card's evidentiary content.
     return " ".join(
         (
             candidate.title,
             candidate.quote,
             candidate.summary,
-            candidate.context,
-            candidate.source_role,
         )
     )
 
@@ -194,7 +212,9 @@ def rank_evidence_with_explanations(
     query_keywords = extract_keywords(query)
     query_ascii = set(re.findall(r"[a-z][a-z0-9]{1,}", query_normalized))
 
-    matches: list[RetrievalMatch] = []
+    prepared: list[
+        tuple[EvidenceCandidate, str, set[str], set[str], set[str]]
+    ] = []
     for candidate in candidates:
         if not is_retrievable(candidate):
             continue
@@ -205,16 +225,54 @@ def rank_evidence_with_explanations(
         candidate_ascii = set(
             re.findall(r"[a-z][a-z0-9]{1,}", candidate_normalized)
         )
+        prepared.append(
+            (
+                candidate,
+                candidate_normalized,
+                candidate_ngrams,
+                candidate_keywords,
+                candidate_ascii,
+            )
+        )
+
+    ngram_df: Counter[str] = Counter()
+    keyword_df: Counter[str] = Counter()
+    for _, _, candidate_ngrams, candidate_keywords, candidate_ascii in prepared:
+        ngram_df.update(candidate_ngrams)
+        keyword_df.update(candidate_keywords | candidate_ascii)
+    corpus_size = max(1, len(prepared))
+
+    def weight(term: str, frequencies: Counter[str]) -> float:
+        return 1.0 + math.log((corpus_size + 1) / (frequencies[term] + 1))
+
+    matches: list[RetrievalMatch] = []
+    for (
+        candidate,
+        candidate_normalized,
+        candidate_ngrams,
+        candidate_keywords,
+        candidate_ascii,
+    ) in prepared:
 
         common_ngrams = query_ngrams & candidate_ngrams
         common_keywords = (query_keywords & candidate_keywords) | (
             query_ascii & candidate_ascii
         )
-        ngram_recall = len(common_ngrams) / max(1, len(query_ngrams))
-        ngram_jaccard = len(common_ngrams) / max(
-            1, len(query_ngrams | candidate_ngrams)
+        query_ngram_weight = sum(weight(term, ngram_df) for term in query_ngrams)
+        common_ngram_weight = sum(weight(term, ngram_df) for term in common_ngrams)
+        union_ngram_weight = sum(
+            weight(term, ngram_df) for term in query_ngrams | candidate_ngrams
         )
-        keyword_recall = len(common_keywords) / max(1, len(query_keywords | query_ascii))
+        query_keyword_terms = query_keywords | query_ascii
+        query_keyword_weight = sum(
+            weight(term, keyword_df) for term in query_keyword_terms
+        )
+        common_keyword_weight = sum(
+            weight(term, keyword_df) for term in common_keywords
+        )
+        ngram_recall = common_ngram_weight / max(1.0, query_ngram_weight)
+        ngram_jaccard = common_ngram_weight / max(1.0, union_ngram_weight)
+        keyword_recall = common_keyword_weight / max(1.0, query_keyword_weight)
         direct_bonus = (
             0.08
             if query_normalized
@@ -224,17 +282,45 @@ def rank_evidence_with_explanations(
             )
             else 0.0
         )
+        title_topic_overlap = query_ngrams & chinese_ngrams(
+            candidate.title, sizes=(4,)
+        )
+        topic_bonus = min(0.36, 0.12 * len(title_topic_overlap))
+        context_topic_overlap = query_ngrams & chinese_ngrams(
+            candidate.context, sizes=(4,)
+        )
+        context_bonus = min(0.18, 0.09 * len(context_topic_overlap))
         coverage_bonus = min(0.08, math.log1p(len(common_ngrams)) / 50)
         score = min(
             1.0,
-            0.52 * ngram_recall
-            + 0.20 * ngram_jaccard
-            + 0.20 * keyword_recall
+            0.56 * ngram_recall
+            + 0.18 * ngram_jaccard
+            + 0.18 * keyword_recall
             + direct_bonus
+            + topic_bonus
+            + context_bonus
             + coverage_bonus,
         )
         if not common_ngrams and not common_keywords:
             score = 0.0
+        distinctive_ngrams = {
+            term
+            for term in common_ngrams
+            if ngram_df[term] <= max(1, corpus_size // 4)
+        }
+        distinctive_keywords = {
+            term
+            for term in common_keywords
+            if keyword_df[term] <= max(1, corpus_size // 4)
+        }
+        if (
+            not distinctive_ngrams
+            and not distinctive_keywords
+            and not direct_bonus
+            and not title_topic_overlap
+            and not context_topic_overlap
+        ):
+            score = min(score, 0.06)
 
         scored_candidate = replace(candidate, relevance=round(score, 6))
         matches.append(

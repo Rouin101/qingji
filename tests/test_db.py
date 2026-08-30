@@ -361,6 +361,20 @@ class DatabaseTestCase(unittest.TestCase):
                         project_a, "retrieval_eval", limit=invalid_limit
                     )
 
+    def test_model_run_history_filters_project_status_and_type(self) -> None:
+        project_a = self.db.create_project("模型运行A")
+        project_b = self.db.create_project("模型运行B")
+        failed = self.db.create_agent_run(
+            project_a, "llm_evidence_card_generation", status="failed"
+        )
+        self.db.create_agent_run(project_a, "llm_claim_assistance")
+        self.db.create_agent_run(project_a, "claim_retrieval")
+        self.db.create_agent_run(project_b, "llm_evidence_card_generation")
+
+        history = self.db.list_model_runs(project_a, status="failed")
+        self.assertEqual([item["id"] for item in history], [failed])
+        self.assertEqual(self.db.get_agent_run(failed)["project_id"], project_a)
+
     def test_claim_history_filters_search_and_stats(self) -> None:
         project_id = self.db.create_project("结论历史测试")
         supported_id = self.db.create_claim(

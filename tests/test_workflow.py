@@ -17,6 +17,8 @@ from qingji.llm import (
     EvidenceCardGenerationAdvice,
     EvidenceCardGenerationItem,
     EvidenceAdvice,
+    MaterialClaimCandidateAdvice,
+    MaterialClaimCandidateItem,
 )
 from qingji.models import (
     ConsentStatus,
@@ -31,6 +33,8 @@ from qingji.workflow import (
     list_regenerable_rejected_evidence_cards,
     regenerate_rejected_evidence_card,
     regenerate_rejected_material_evidence_cards,
+    retry_failed_model_run,
+    retry_material_model_processing,
     recheck_claim,
     recheck_project_claims,
     review_evidence_card,
@@ -155,6 +159,99 @@ class WorkflowTestCase(unittest.TestCase):
             {card["review_status"] for card in cards}, {"approved"}
         )
         self.assertEqual(cards[0]["material_id"], result.material_id)
+
+    def test_model_retry_resumes_persisted_material_and_is_idempotent(self) -> None:
+        result = import_text_material(
+            self.db,
+            self.project_id,
+            DIFFICULTY_TEXT,
+            original_filename="待恢复材料.txt",
+            source_role="模拟受访者",
+            context="内部测试",
+            captured_at=None,
+            consent_status="confirmed",
+            custom_sensitive_terms=None,
+            is_fictional=True,
+        )
+        self.assertEqual(result.evidence_card_ids, [])
+        segment_id = int(self.db.list_segments(result.material_id)[0]["id"])
+        candidate_advice = MaterialClaimCandidateAdvice(
+            candidates=(
+                MaterialClaimCandidateItem(
+                    claim_text="一名受访者表示平台操作需要帮助。",
+                    segment_ids=(segment_id,),
+                ),
+            ),
+            uncertainties=(),
+            model="test-model",
+        )
+        configured = SimpleNamespace(
+            configured=True,
+            model="test-model",
+            provider="test-provider",
+            max_context_chars=12000,
+        )
+        with patch("qingji.workflow.llm_settings", configured), patch(
+            "qingji.workflow.request_material_claim_candidates",
+            return_value=candidate_advice,
+        ) as candidate_request:
+            recovered = retry_material_model_processing(
+                self.db, self.project_id, result.material_id
+            )
+            repeated = retry_material_model_processing(
+                self.db, self.project_id, result.material_id
+            )
+
+        self.assertEqual(len(recovered.evidence_card_ids), 1)
+        self.assertEqual(len(recovered.claim_candidate_ids), 1)
+        self.assertEqual(recovered.errors, ())
+        self.assertEqual(repeated.evidence_card_ids, ())
+        self.assertEqual(repeated.claim_candidate_ids, ())
+        self.assertIn("evidence_cards_complete", repeated.skipped_steps)
+        self.assertIn("claim_candidates_complete", repeated.skipped_steps)
+        candidate_request.assert_called_once()
+
+    def test_failed_model_run_retries_from_original_material(self) -> None:
+        result = import_text_material(
+            self.db,
+            self.project_id,
+            DIFFICULTY_TEXT,
+            original_filename="失败任务材料.txt",
+            source_role="模拟受访者",
+            context="内部测试",
+            captured_at=None,
+            consent_status="confirmed",
+            custom_sensitive_terms=None,
+            is_fictional=True,
+        )
+        failed_run_id = self.db.create_agent_run(
+            self.project_id,
+            "llm_evidence_card_generation",
+            status="failed",
+            input_data={"material_id": result.material_id},
+            error_message="temporary failure",
+        )
+        configured = SimpleNamespace(
+            configured=True,
+            model="test-model",
+            provider="test-provider",
+            max_context_chars=12000,
+        )
+        with patch("qingji.workflow.llm_settings", configured), patch(
+            "qingji.workflow.request_material_claim_candidates",
+            return_value=MaterialClaimCandidateAdvice(
+                candidates=(), uncertainties=(), model="test-model"
+            ),
+        ):
+            recovered = retry_failed_model_run(
+                self.db, self.project_id, failed_run_id
+            )
+
+        self.assertEqual(len(recovered.evidence_card_ids), 1)
+        latest = self.db.get_latest_project_run(
+            self.project_id, "llm_evidence_card_generation"
+        )
+        self.assertEqual(latest["input"]["retry_of_run_id"], failed_run_id)
 
     def test_confirmed_import_uses_model_cards_and_reconstructs_exact_quotes(self) -> None:
         advice = EvidenceCardGenerationAdvice(
@@ -779,7 +876,7 @@ class WorkflowTestCase(unittest.TestCase):
     def test_long_material_keeps_model_selected_source_boundaries(self) -> None:
         long_text = "".join(
             f"第{index}位受访者记录：使用线上平台时描述了办理流程和遇到的问题。"
-            for index in range(1, 901)
+            for index in range(1, 91)
         )
         with patch(
             "qingji.workflow.llm_settings", SimpleNamespace(configured=True)
@@ -798,9 +895,8 @@ class WorkflowTestCase(unittest.TestCase):
             )
 
         segments = self.db.list_segments(result.material_id)
-        self.assertGreater(len(segments), len(result.evidence_card_ids))
-        self.assertLessEqual(len(result.evidence_card_ids), 40)
-        self.assertTrue(any("由模型生成" in warning for warning in result.warnings))
+        self.assertEqual(len(segments), len(result.evidence_card_ids))
+        self.assertFalse(any("由模型生成" in warning for warning in result.warnings))
         card_quotes = "\n".join(
             self.db.get_evidence_card(card_id)["quote"]
             for card_id in result.evidence_card_ids

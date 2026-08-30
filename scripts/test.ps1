@@ -14,3 +14,5 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & $projectPython scripts\eval_retrieval.py
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+& $projectPython scripts\eval_project_benchmark.py
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

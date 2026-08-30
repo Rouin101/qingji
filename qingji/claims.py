@@ -43,6 +43,12 @@ _DIFFICULTY_POSITIVES = (
     "遇到问题",
     "寻求帮助",
     "需要帮助",
+    "需要协助",
+    "寻求协助",
+    "需要人工帮助",
+    "需要工作人员帮助",
+    "需要现场人员帮助",
+    "存在困难",
 )
 
 
@@ -200,6 +206,8 @@ def evaluate_claim(
     # A small threshold removes cards that share only a generic character pair.
     relevant = [match for match in matches if match.score >= 0.08]
     claim_stance = _stance(claim_text)
+    flags = detect_rule_flags(claim_text)
+    strongest_score = max((match.score for match in relevant), default=0.0)
     supporting: list[EvidenceCandidate] = []
     contradicting: list[EvidenceCandidate] = []
     context: list[EvidenceCandidate] = []
@@ -209,6 +217,14 @@ def evaluate_claim(
         relation = (relation_overrides or {}).get(int(candidate.id))
         if relation not in {"support", "contradict", "context"}:
             relation = _relation(claim_stance, match)
+        # Strong scope/causal/quantity claims need evidence tied to the main
+        # topic, not several weaker cards that only share generic vocabulary.
+        if (
+            relation == "support"
+            and flags
+            and match.score < strongest_score * 0.65
+        ):
+            relation = "context"
         if relation == "support":
             supporting.append(candidate)
         elif relation == "contradict":
@@ -216,7 +232,6 @@ def evaluate_claim(
         else:
             context.append(candidate)
 
-    flags = detect_rule_flags(claim_text)
     missing: list[str] = []
     if "group_generalization" in flags or "absolute_quantifier" in flags:
         missing.extend(

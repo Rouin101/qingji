@@ -368,6 +368,7 @@ def render_sidebar_note(
         st.page_link("pages/1_材料与证据.py", label="材料与证据")
         st.page_link("pages/2_结论核验.py", label="结论核验")
         st.page_link("pages/3_成果与缺口.py", label="成果与缺口")
+        st.page_link("pages/4_模型运行中心.py", label="模型运行中心")
         st.divider()
         st.markdown("### 青迹")
         st.caption("让实践有迹可循，让结论有据可查。")

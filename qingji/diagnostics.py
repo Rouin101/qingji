@@ -14,7 +14,7 @@ from .retrieval import (
 )
 
 
-RETRIEVAL_DIAGNOSTIC_VERSION = "local_ngram_v1"
+RETRIEVAL_DIAGNOSTIC_VERSION = "local_weighted_ngram_v2"
 RELEVANCE_THRESHOLD = 0.08
 MAX_EVALUATION_CANDIDATES = 8
 

@@ -45,6 +45,7 @@ PAGES = [
     "pages/1_材料与证据.py",
     "pages/2_结论核验.py",
     "pages/3_成果与缺口.py",
+    "pages/4_模型运行中心.py",
 ]
 
 
