@@ -92,7 +92,7 @@ settings = Settings.from_env()
 
 @dataclass(frozen=True)
 class LLMSettings:
-    """Opt-in configuration for the v1.1 model-assistance layer.
+    """Opt-in configuration for the model-assistance layer.
 
     The default is deliberately disabled. The model is contacted only during
     user-triggered, consent-gated generation or review actions.

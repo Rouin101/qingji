@@ -400,7 +400,7 @@ def render_sidebar_note(
                 "</div>",
                 unsafe_allow_html=True,
             )
-        st.caption("v1.3 · 参赛版")
+        st.caption("v1.3 · 最终参赛版")
 
 
 def render_demo_notice(project: Mapping[str, Any] | None) -> None:
