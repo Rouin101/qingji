@@ -64,6 +64,7 @@ _MATERIAL_IMPORT_STATE_DEFAULTS = {
     "material_captured_at": None,
     "material_consent_choice": "confirmed",
     "material_custom_terms": "",
+    "material_is_fictional": False,
     "material_confirmed": False,
 }
 _MATERIAL_IMPORT_RESET_KEYS = (
@@ -287,7 +288,6 @@ with tab_import:
     # partially completed material entry. Successful imports also remain
     # visible until the user intentionally replaces them.
     with st.form("material_import_form", clear_on_submit=False):
-        is_fictional = False
         text = st.text_area(
             "材料正文",
             height=220,
@@ -336,6 +336,12 @@ with tab_import:
                 placeholder="用逗号分隔，例如：姓名, 详细地址",
                 help="适合标记姓名、精确住址或本项目特有身份信息。",
             )
+
+        is_fictional = st.checkbox(
+            "这是模拟演示材料",
+            key="material_is_fictional",
+            help="勾选后，材料、证据卡和导出报告都会保留模拟数据标识。",
+        )
 
         material_confirmed = st.checkbox(
             "我确认已如实填写来源和授权状态，并会在引用或导出前复核脱敏文本。",
