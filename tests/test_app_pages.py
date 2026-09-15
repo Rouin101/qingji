@@ -192,6 +192,58 @@ class AppPageSmokeTest(unittest.TestCase):
         self.assertEqual(app.exception, [])
         self.assertEqual(database.get_evidence_card(card_id)["review_status"], "approved")
 
+    def test_evidence_review_renders_only_one_page_of_cards(self) -> None:
+        database = get_database()
+        project_id = database.create_project("证据卡分页页面检查")
+        material_id = database.create_material(
+            project_id,
+            "text",
+            original_filename="分页材料.txt",
+            source_role="正式记录",
+            context="分页性能检查",
+            captured_at="2026-09-15",
+            consent_status="confirmed",
+            processing_status="ready",
+        )
+        segment_id = database.create_segment(
+            material_id,
+            1,
+            "这是一段用于检查证据卡分页渲染的已脱敏材料。",
+            locator="第 1 段",
+        )
+        card_ids = [
+            database.create_evidence_card(
+                project_id,
+                segment_id,
+                "formal_record",
+                f"分页证据 {index}",
+                "已脱敏材料原文。",
+                f"第 {index} 张分页测试证据卡。",
+            )
+            for index in range(1, 26)
+        ]
+
+        app = AppTest.from_file("app.py", default_timeout=30)
+        app.run()
+        app.session_state["qingji_project_id"] = project_id
+        app.switch_page("pages/1_材料与证据.py")
+        app.run()
+
+        self.assertEqual(app.exception, [])
+        rendered_decisions = [
+            item for item in app.radio if str(item.key).startswith("decision_")
+        ]
+        self.assertEqual(len(rendered_decisions), 10)
+        newest_ids = set(sorted(card_ids, reverse=True)[:10])
+        self.assertEqual(
+            {int(str(item.key).removeprefix("decision_")) for item in rendered_decisions},
+            newest_ids,
+        )
+        self.assertEqual(
+            len(app.selectbox(key=f"evidence_review_page_{project_id}").options),
+            3,
+        )
+
     def test_claim_form_keeps_input_after_validation_error(self) -> None:
         app = self._open_claim_page()
         invalid_claim = "超出长度限制的结论。" * 80
@@ -297,7 +349,7 @@ class AppPageSmokeTest(unittest.TestCase):
             "手工录入_项目记录.txt",
         )
 
-    def test_bulk_regeneration_button_replaces_per_card_buttons(self) -> None:
+    def test_bounded_regeneration_button_replaces_per_card_buttons(self) -> None:
         database = get_database()
         project_id = database.create_project("批量拒绝卡重新生成页面检查")
         imported = _import_model_generated_material(
@@ -334,7 +386,7 @@ class AppPageSmokeTest(unittest.TestCase):
         self.assertEqual(app.exception, [])
         self.assertTrue(
             any(
-                item.label == "一键根据拒绝理由重新生成全部被拒绝卡片"
+                item.label == "重新生成下一份材料中的被拒绝卡片"
                 for item in app.button
             )
         )

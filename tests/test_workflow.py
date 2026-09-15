@@ -742,7 +742,7 @@ class WorkflowTestCase(unittest.TestCase):
             list_regenerable_rejected_evidence_cards(self.db, self.project_id), ()
         )
 
-    def test_approving_evidence_refreshes_only_its_project_claims(self) -> None:
+    def test_approving_retrievable_draft_does_not_repeat_claim_checks(self) -> None:
         stored = check_and_store_claim(self.db, self.project_id, SIMPLE_CLAIM)
         initial_tasks = self.db.list_followup_tasks(claim_id=stored.claim_id)
         self.assertTrue(initial_tasks)
@@ -779,7 +779,7 @@ class WorkflowTestCase(unittest.TestCase):
             change_reason="",
         )
 
-        self.assertEqual(review.rechecked_claim_ids, (stored.claim_id,))
+        self.assertEqual(review.rechecked_claim_ids, ())
         self.assertIsNotNone(review.review_event_id)
         self.assertEqual(
             self.db.list_evidence_review_events(
@@ -788,8 +788,10 @@ class WorkflowTestCase(unittest.TestCase):
             "",
         )
         self.assertEqual(
-            self.db.get_claim(stored.claim_id)["verdict"], Verdict.SUPPORTED.value
+            self.db.get_claim(stored.claim_id)["verdict"], Verdict.UNSUPPORTED.value
         )
+        rechecked = recheck_claim(self.db, stored.claim_id)
+        self.assertEqual(rechecked.evaluation.verdict, Verdict.SUPPORTED)
         resolved_tasks = self.db.list_followup_tasks(claim_id=stored.claim_id)
         self.assertTrue(all(task["status"] == "done" for task in resolved_tasks))
         self.assertEqual(
@@ -938,6 +940,7 @@ class WorkflowTestCase(unittest.TestCase):
             }
             for card_id in imported.evidence_card_ids
         ]
+        updates[0]["summary"] += " 已由人工复核摘要。"
         results = review_evidence_cards(self.db, updates)
 
         self.assertTrue(results)
@@ -947,6 +950,34 @@ class WorkflowTestCase(unittest.TestCase):
         self.assertEqual(
             self.db.get_claim(stored.claim_id)["verdict"],
             Verdict.SUPPORTED.value,
+        )
+
+    def test_evidence_review_reuses_saved_relations_without_provider_calls(self) -> None:
+        imported = self._import(DIFFICULTY_TEXT)
+        stored = check_and_store_claim(self.db, self.project_id, SIMPLE_CLAIM)
+        card = self.db.get_evidence_card(imported.evidence_card_ids[0])
+        self.db.set_evidence_review_status(int(card["id"]), "draft")
+        card = self.db.get_evidence_card(int(card["id"]))
+        configured = SimpleNamespace(configured=True, model="test-model")
+
+        with (
+            patch("qingji.workflow.llm_settings", configured),
+            patch("qingji.workflow.request_claim_evidence_review") as request_review,
+        ):
+            review = review_evidence_card(
+                self.db,
+                int(card["id"]),
+                title=card["title"],
+                summary=card["summary"],
+                evidence_type=card["evidence_type"],
+                review_status="approved",
+                change_reason="审核性能检查",
+            )
+
+        request_review.assert_not_called()
+        self.assertEqual(review.rechecked_claim_ids, ())
+        self.assertEqual(
+            self.db.get_claim(stored.claim_id)["verdict"], Verdict.SUPPORTED.value
         )
 
     def test_confirmed_model_relation_can_replace_local_support_link(self) -> None:

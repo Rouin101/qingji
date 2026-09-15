@@ -1028,6 +1028,97 @@ def recheck_claim(
     )
 
 
+def _recheck_claim_from_saved_relations(db: Any, claim_id: int) -> StoredClaimResult:
+    """Refresh one claim without starting another provider request.
+
+    Evidence review already has a separate, explicit model step. Reusing the
+    latest stored relations here keeps that interaction responsive while local
+    retrieval and boundary rules still account for the changed evidence set.
+    The conclusion page remains the explicit place for a fresh model recheck.
+    """
+
+    links = db.list_claim_evidence_links(int(claim_id))
+    relation_overrides = {
+        int(link["evidence_card_id"]): str(link["relation"])
+        for link in links
+        if str(link.get("relation") or "") in {"support", "contradict", "context"}
+    }
+    relation_rationales = {
+        int(link["evidence_card_id"]): str(link.get("rationale") or "")
+        for link in links
+        if str(link.get("rationale") or "").strip()
+    }
+    return recheck_claim(
+        db,
+        int(claim_id),
+        relation_overrides=relation_overrides,
+        relation_rationales=relation_rationales,
+    )
+
+
+def _review_refresh_scope(
+    current: Mapping[str, Any], changes: Mapping[str, Any]
+) -> str:
+    """Return how a review edit can affect existing claim snapshots."""
+
+    after = {**current, **changes}
+    before_retrievable = is_retrievable_evidence(current)
+    after_retrievable = is_retrievable_evidence(after)
+    if before_retrievable != after_retrievable:
+        return "all" if after_retrievable else "linked"
+    if not before_retrievable:
+        return "none"
+    if any(
+        _status_value(current.get(field)) != _status_value(changes.get(field))
+        for field in ("title", "summary", "evidence_type")
+    ):
+        return "all"
+    if _status_value(current.get("review_status")) != _status_value(
+        changes.get("review_status")
+    ):
+        # Draft and approved cards are both retrievable, so confirming a draft
+        # does not change the evidence set used by existing claim snapshots.
+        return "none"
+    return "none"
+
+
+def _review_claim_ids_to_refresh(
+    db: Any,
+    project_id: int,
+    review_items: Sequence[Mapping[str, Any]],
+) -> tuple[int, ...]:
+    """Select only claims whose snapshot can change after evidence review."""
+
+    scoped = [
+        (
+            _review_refresh_scope(item["current"], item["changes"]),
+            item["current"],
+        )
+        for item in review_items
+        if item.get("changed")
+    ]
+    if not scoped or all(scope == "none" for scope, _ in scoped):
+        return ()
+    claims = db.list_claims(int(project_id))
+    if any(scope == "all" for scope, _ in scoped):
+        return tuple(int(claim["id"]) for claim in claims)
+
+    removed_ids = {
+        int(current["id"])
+        for scope, current in scoped
+        if scope == "linked"
+    }
+    selected: list[int] = []
+    for claim in claims:
+        claim_id = int(claim["id"])
+        if removed_ids:
+            links = db.list_claim_evidence_links(claim_id)
+            if any(int(link["evidence_card_id"]) in removed_ids for link in links):
+                selected.append(claim_id)
+                continue
+    return tuple(selected)
+
+
 def recheck_project_claims(
     db: Any, project_id: int
 ) -> tuple[StoredClaimResult, ...]:
@@ -1100,16 +1191,17 @@ def review_evidence_card(
     if updated is None:
         raise RuntimeError(f"证据 E{evidence_card_id} 保存失败。")
 
-    rechecked_claim_ids: list[int] = []
-    if evidence_fields_changed and (
-        is_retrievable_evidence(current)
-        or is_retrievable_evidence({**current, **updated})
-    ):
-        project_id = int(updated["project_id"])
-        for claim in db.list_claims(project_id):
-            claim_id = int(claim["id"])
-            recheck_claim(db, claim_id)
-            rechecked_claim_ids.append(claim_id)
+    project_id = int(updated["project_id"])
+    review_item = {
+        "current": current,
+        "changes": changes,
+        "changed": evidence_fields_changed,
+    }
+    rechecked_claim_ids = list(
+        _review_claim_ids_to_refresh(db, project_id, [review_item])
+    )
+    for claim_id in rechecked_claim_ids:
+        _recheck_claim_from_saved_relations(db, claim_id)
 
     after_snapshot = {
         field: _status_value(updated.get(field))
@@ -1215,7 +1307,7 @@ def list_regenerable_rejected_evidence_cards(
 
 
 def regenerate_rejected_material_evidence_cards(
-    db: Any, project_id: int
+    db: Any, project_id: int, *, max_materials: int | None = None
 ) -> tuple[MaterialEvidenceRegenerationResult, ...]:
     """Re-extract replacement cards from each rejected material with the model.
 
@@ -1230,8 +1322,15 @@ def regenerate_rejected_material_evidence_cards(
     for card in candidates:
         cards_by_material.setdefault(int(card["material_id"]), []).append(card)
 
+    if max_materials is not None:
+        if isinstance(max_materials, bool) or int(max_materials) < 1:
+            raise ValueError("max_materials 必须是正整数或 None。")
+        material_groups = list(cards_by_material.items())[: int(max_materials)]
+    else:
+        material_groups = list(cards_by_material.items())
+
     results: list[MaterialEvidenceRegenerationResult] = []
-    for material_id, cards in cards_by_material.items():
+    for material_id, cards in material_groups:
         material = db.get_material(material_id)
         if material is None:
             raise ValueError(f"材料 M{material_id} 不存在。")
@@ -1472,22 +1571,9 @@ def review_evidence_cards(
         else:
             item["updated"] = item["current"]
 
-    should_recheck = any(
-        item["changed"]
-        and (
-            is_retrievable_evidence(item["current"])
-            or is_retrievable_evidence({**item["current"], **item["updated"]})
-        )
-        for item in prepared
-    )
-    rechecked_claim_ids: tuple[int, ...] = ()
-    if should_recheck:
-        refreshed: list[int] = []
-        for claim in db.list_claims(project_id):
-            claim_id = int(claim["id"])
-            recheck_claim(db, claim_id)
-            refreshed.append(claim_id)
-        rechecked_claim_ids = tuple(refreshed)
+    rechecked_claim_ids = _review_claim_ids_to_refresh(db, project_id, prepared)
+    for claim_id in rechecked_claim_ids:
+        _recheck_claim_from_saved_relations(db, claim_id)
 
     results: list[EvidenceReviewResult] = []
     for item in prepared:

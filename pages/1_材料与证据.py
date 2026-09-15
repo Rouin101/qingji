@@ -53,6 +53,8 @@ _SOURCE_ROLE_OPTIONS = [
     "团队分析",
 ]
 _SINGLE_SOURCE_ROLE_OPTIONS = ["请选择", *_SOURCE_ROLE_OPTIONS]
+_EVIDENCE_PAGE_SIZE = 10
+_MODEL_REVIEW_BATCH_SIZE = 8
 
 _MATERIAL_IMPORT_PROJECT_KEY = "material_import_project_id"
 _MATERIAL_IMPORT_STATE_DEFAULTS = {
@@ -730,14 +732,15 @@ with tab_review:
             st.caption(
                 "模型只会读取再次脱敏后的已授权证据卡，核对卡片是否忠实于原文。"
                 "材料存在样本局限并不等于卡片无效；局限会保留为不确定性。"
-                "勾选确认后，模型建议会直接写入审核状态。"
+                "勾选确认后，模型建议会直接写入审核状态。为保持页面可响应，"
+                f"每次最多审核 {_MODEL_REVIEW_BATCH_SIZE} 张。"
             )
             trust_model = st.checkbox(
                 "我确认信任本次大模型审核结果，并允许其自动写入审核状态。",
                 key=f"trust_llm_review_{project_id}",
             )
             model_bulk = st.button(
-                "让大模型审核全部待审核卡片",
+                f"让大模型审核下一批（最多 {_MODEL_REVIEW_BATCH_SIZE} 张）",
                 type="primary",
                 disabled=not trust_model or not authorized_draft_cards,
                 key=f"llm_review_all_evidence_{project_id}",
@@ -748,74 +751,60 @@ with tab_review:
                 rejected_count = 0
                 rechecked_claim_ids: set[int] = set()
                 model_updates: list[dict] = []
+                batch = list(authorized_draft_cards[:_MODEL_REVIEW_BATCH_SIZE])
                 with st.spinner(
-                    f"正在让模型审核全部 {len(authorized_draft_cards)} 张证据卡……"
+                    f"正在让模型审核本批 {len(batch)} 张证据卡……"
                 ):
-                    remaining_cards = list(authorized_draft_cards)
-                    while remaining_cards:
-                        batch = remaining_cards
-                        run_input = {
-                            "evidence_ids": [int(card["id"]) for card in batch],
-                            "model": llm_settings.model,
-                            "review_source": "bulk_all",
-                        }
-                        try:
-                            advice = request_evidence_review_batch(
-                                batch,
-                                config=llm_settings,
+                    run_input = {
+                        "evidence_ids": [int(card["id"]) for card in batch],
+                        "model": llm_settings.model,
+                        "review_source": "bounded_batch",
+                    }
+                    try:
+                        advice = request_evidence_review_batch(
+                            batch,
+                            config=llm_settings,
+                        )
+                        advice_data = advice.as_dict()
+                        db.create_agent_run(
+                            project_id,
+                            "llm_evidence_review",
+                            input_data=run_input,
+                            output_data=advice_data,
+                        )
+                        card_by_id = {int(card["id"]): card for card in batch}
+                        for evidence_id, item in advice.reviews:
+                            card = card_by_id.get(int(evidence_id))
+                            if card is None:
+                                raise ValueError(
+                                    f"模型返回了当前批次之外的证据 E{evidence_id}。"
+                                )
+                            model_updates.append(
+                                {
+                                    "evidence_card_id": int(evidence_id),
+                                    "title": str(card.get("title") or "").strip(),
+                                    "summary": str(card.get("summary") or "").strip(),
+                                    "evidence_type": card.get(
+                                        "evidence_type", "team_analysis"
+                                    ),
+                                    "review_status": item.review_status,
+                                    "change_reason": item.review_reason,
+                                }
                             )
-                            advice_data = advice.as_dict()
+                        if not advice.reviews:
+                            raise ValueError("模型本次未返回任何证据卡审核结果。")
+                    except Exception as exc:
+                        model_failures.append(f"本批 {len(batch)} 张证据卡：{exc}")
+                        try:
                             db.create_agent_run(
                                 project_id,
                                 "llm_evidence_review",
+                                status="failed",
                                 input_data=run_input,
-                                output_data=advice_data,
+                                error_message=str(exc)[:500],
                             )
-                            card_by_id = {int(card["id"]): card for card in batch}
-                            for evidence_id, item in advice.reviews:
-                                card = card_by_id.get(int(evidence_id))
-                                if card is None:
-                                    raise ValueError(
-                                        f"模型返回了当前批次之外的证据 E{evidence_id}。"
-                                )
-                                model_updates.append(
-                                    {
-                                        "evidence_card_id": int(evidence_id),
-                                        "title": str(card.get("title") or "").strip(),
-                                        "summary": str(card.get("summary") or "").strip(),
-                                        "evidence_type": card.get(
-                                            "evidence_type", "team_analysis"
-                                        ),
-                                        "review_status": item.review_status,
-                                        "change_reason": item.review_reason,
-                                    }
-                                )
-                            reviewed_ids = {
-                                int(evidence_id)
-                                for evidence_id, _ in advice.reviews
-                            }
-                            if not reviewed_ids:
-                                raise ValueError("模型本次未返回任何证据卡审核结果。")
-                            remaining_cards = [
-                                card
-                                for card in remaining_cards
-                                if int(card["id"]) not in reviewed_ids
-                            ]
-                        except Exception as exc:
-                            model_failures.append(
-                                f"剩余 {len(batch)} 张证据卡：{exc}"
-                            )
-                            try:
-                                db.create_agent_run(
-                                    project_id,
-                                    "llm_evidence_review",
-                                    status="failed",
-                                    input_data=run_input,
-                                    error_message=str(exc)[:500],
-                                )
-                            except Exception:
-                                pass
-                            break
+                        except Exception:
+                            pass
                 if model_updates:
                     try:
                         results = review_evidence_cards(db, model_updates)
@@ -830,10 +819,17 @@ with tab_review:
                         for result in results:
                             rechecked_claim_ids.update(result.rechecked_claim_ids)
                 completion_message = (
-                    f"模型审核完成：建议确认 {approved_count} 张，"
+                    f"本批审核完成：建议确认 {approved_count} 张，"
                     f"排除 {rejected_count} 张，"
-                    f"重新核验结论 {len(rechecked_claim_ids)} 条。"
+                    f"快速更新结论 {len(rechecked_claim_ids)} 条。"
                 )
+                remaining_count = max(
+                    0, len(authorized_draft_cards) - len(model_updates)
+                )
+                if remaining_count:
+                    completion_message += (
+                        f" 仍有 {remaining_count} 张待审核，可继续点击审核下一批。"
+                    )
                 if model_failures:
                     st.session_state[llm_review_notice_key] = {
                         "level": "error",
@@ -861,22 +857,22 @@ with tab_review:
                 if regenerable_rejected_cards:
                     st.caption(
                         f"当前有 {len(regenerable_rejected_cards)} 张已拒绝卡片可根据各自的"
-                        "拒绝理由重新生成。新卡仍需人工或模型重新审核。"
+                        "拒绝理由重新生成。每次只处理一份来源材料，新卡仍需人工或模型重新审核。"
                     )
                     regenerate_all = st.button(
-                        "一键根据拒绝理由重新生成全部被拒绝卡片",
+                        "重新生成下一份材料中的被拒绝卡片",
                         key=f"regenerate_all_rejected_evidence_{project_id}",
                     )
                     if regenerate_all:
                         created_ids: list[int] = []
                         regeneration_failures: list[str] = []
                         with st.spinner(
-                            f"正在根据拒绝理由重新生成 {len(regenerable_rejected_cards)} 张证据卡……"
+                            "正在根据拒绝理由重新整理下一份来源材料……"
                         ):
                             try:
                                 regeneration_results = (
                                     regenerate_rejected_material_evidence_cards(
-                                        db, project_id
+                                        db, project_id, max_materials=1
                                     )
                                 )
                             except Exception as exc:
@@ -956,7 +952,31 @@ with tab_review:
             "当前筛选条件下没有证据卡。请先在“导入文字材料”标签提交材料，"
             "或调整上方筛选条件。"
         )
-    for card in cards:
+    total_card_count = len(cards)
+    total_pages = max(1, (total_card_count + _EVIDENCE_PAGE_SIZE - 1) // _EVIDENCE_PAGE_SIZE)
+    page_key = f"evidence_review_page_{project_id}"
+    current_page = int(st.session_state.get(page_key, 1) or 1)
+    if current_page > total_pages or current_page < 1:
+        st.session_state[page_key] = 1
+    if total_card_count:
+        page_columns = st.columns([1, 3])
+        with page_columns[0]:
+            page_number = st.selectbox(
+                "页码",
+                list(range(1, total_pages + 1)),
+                key=page_key,
+                format_func=lambda item: f"第 {item} 页",
+            )
+        page_start = (int(page_number) - 1) * _EVIDENCE_PAGE_SIZE
+        visible_cards = cards[page_start : page_start + _EVIDENCE_PAGE_SIZE]
+        with page_columns[1]:
+            st.caption(
+                f"共 {total_card_count} 张，当前显示第 {page_start + 1}–"
+                f"{page_start + len(visible_cards)} 张；每页最多 {_EVIDENCE_PAGE_SIZE} 张。"
+            )
+    else:
+        visible_cards = []
+    for card in visible_cards:
         card_id = int(card["id"])
         title = card.get("title") or f"证据 E{card_id}"
         with st.expander(
