@@ -58,6 +58,45 @@ class ClaimBoundaryTests(unittest.TestCase):
                 result = evaluate_claim(claim, [card(claim, kind=EvidenceType.FORMAL_RECORD)], relation_overrides={1: "support"})
                 self.assertEqual(result.verdict, Verdict.PARTIALLY_SUPPORTED)
 
+    def test_semantic_support_keeps_core_fact_when_scope_or_wording_differs(self):
+        cases = [
+            (
+                "多数本次模拟观察对象能够在两分钟内独立完成预约。",
+                "18名预约者中15人在两分钟内完成预约，其中11人未向他人求助。",
+            ),
+            (
+                "全校学生普遍认为自习空间预约系统难以使用。",
+                "一名学生第一次使用时未找到预约入口，需要同伴帮助。",
+            ),
+        ]
+        for claim, quote in cases:
+            with self.subTest(claim=claim):
+                result = evaluate_claim(claim, [card(quote)], relation_overrides={1: "support"})
+                self.assertEqual(result.verdict, Verdict.PARTIALLY_SUPPORTED)
+
+    def test_ordinal_first_use_is_not_treated_as_a_statistical_quantity(self):
+        claim = "模拟学生A第一次使用系统时未能找到预约入口。"
+        quote = "材料记录，模拟学生A第一次使用系统时在首页寻找入口，三分钟后仍未找到。"
+        result = evaluate_claim(claim, [card(quote)], relation_overrides={1: "support"})
+        self.assertEqual(result.verdict, Verdict.SUPPORTED)
+        self.assertNotIn("precise_quantity", result.rule_flags)
+
+    def test_exact_team_synthesis_does_not_hide_underlying_support(self):
+        claim = "多数本次模拟观察对象能够在两分钟内独立完成预约。"
+        synthesis = card(claim, identity=1, kind=EvidenceType.TEAM_ANALYSIS)
+        observation = card(
+            "18名预约者中15人在两分钟内完成预约，其中11人未向他人求助。",
+            identity=2,
+            kind=EvidenceType.FIELD_OBSERVATION,
+        )
+        result = evaluate_claim(
+            claim,
+            [synthesis, observation],
+            relation_overrides={1: "context", 2: "support"},
+        )
+        self.assertEqual(result.verdict, Verdict.PARTIALLY_SUPPORTED)
+        self.assertEqual(result.supporting_evidence_ids, [2])
+
     def test_different_experiences_do_not_refute_an_existential_claim(self):
         claim = "一名受访者使用平台遇到困难。"
         evidence = [card(claim), card("另一名受访者使用平台没有遇到困难。", 2)]

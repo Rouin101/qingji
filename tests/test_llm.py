@@ -624,6 +624,8 @@ class LLMTests(unittest.TestCase):
         self.assertNotIn("13812345678", prompt)
         self.assertNotIn("110101199001011234", prompt)
         self.assertIn("review_status", prompt)
+        self.assertIn("审核的是卡片与原文是否一致", prompt)
+        self.assertIn("不能仅因这些局限选择 rejected", prompt)
 
     def test_evidence_review_returns_bounded_status(self) -> None:
         def fake_post(url, headers, payload, timeout):
@@ -733,7 +735,8 @@ class LLMTests(unittest.TestCase):
         self.assertEqual(allowed, {1, 2})
         self.assertNotIn("test@example.com", prompt)
         self.assertNotIn("13812345678", prompt)
-        self.assertIn("量词/数量", prompt)
+        self.assertIn("核心事实", prompt)
+        self.assertIn("本地规则降级为‘部分支持’", prompt)
         self.assertIn("必须返回 context", prompt)
         self.assertIn("safe_rewrite", prompt)
 
@@ -775,6 +778,7 @@ class LLMTests(unittest.TestCase):
         self.assertEqual(allowed, {7, 8})
         self.assertIn('"evidence_id":7', prompt)
         self.assertIn('"evidence_id":8', prompt)
+        self.assertIn("不能仅因这些局限选择 rejected", prompt)
 
         calls = 0
 

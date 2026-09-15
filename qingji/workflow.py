@@ -300,8 +300,8 @@ def import_text_material(
         warnings.append("材料已保存，但在授权确认前不会生成可引用证据卡。")
 
     evidence_card_ids: list[int] = []
+    drafts: list[EvidenceDraft] = []
     if consent == ConsentStatus.CONFIRMED.value:
-        drafts: list[EvidenceDraft] = []
         if llm_settings.configured:
             try:
                 if progress_callback is not None:
@@ -314,8 +314,7 @@ def import_text_material(
                     consent_status=consent,
                     source_role=source_role,
                     context=context,
-                    max_cards=len(segments),
-                    require_full_segment_coverage=True,
+                    max_cards=min(len(segments), _MAX_EVIDENCE_CARDS_PER_MATERIAL),
                     progress_callback=(
                         lambda completed, total: progress_callback(
                             f"已完成脱敏，正在生成证据卡（第 {completed}/{total} 批）。"
@@ -344,7 +343,7 @@ def import_text_material(
                 )
                 if not drafts:
                     warnings.append(
-                        "材料已完成语义整理，但没有生成与全部片段对应的证据卡。"
+                        "材料已完成语义整理，但没有找到适合单独审核的事实性证据卡。"
                     )
             except (LLMError, ValueError, KeyError) as exc:
                 db.create_agent_run(
@@ -388,12 +387,21 @@ def import_text_material(
         hasattr(llm_settings, field)
         for field in ("configured", "model", "max_context_chars")
     )
-    if consent == ConsentStatus.CONFIRMED.value and candidate_settings_ready and llm_settings.configured:
+    candidate_segment_ids = {draft.segment_id for draft in drafts}
+    candidate_segments = [
+        segment for segment in segments if int(segment["id"]) in candidate_segment_ids
+    ]
+    if (
+        consent == ConsentStatus.CONFIRMED.value
+        and candidate_settings_ready
+        and llm_settings.configured
+        and candidate_segments
+    ):
         try:
             if progress_callback is not None:
                 progress_callback("正在从脱敏材料中提取待核验结论草稿……")
             candidate_advice = request_material_claim_candidates(
-                segments,
+                candidate_segments,
                 source_role=source_role,
                 context=context,
                 config=llm_settings,
@@ -414,7 +422,7 @@ def import_text_material(
                 status="completed",
                 input_data={
                     "material_id": material_id,
-                    "segment_count": len(segments),
+                    "segment_count": len(candidate_segments),
                     "model": llm_settings.model,
                 },
                 output_data={
@@ -430,7 +438,7 @@ def import_text_material(
                 status="failed",
                 input_data={
                     "material_id": material_id,
-                    "segment_count": len(segments),
+                    "segment_count": len(candidate_segments),
                     "model": getattr(llm_settings, "model", ""),
                 },
                 error_message=str(exc)[:500],
@@ -490,28 +498,23 @@ def retry_material_model_processing(
     if retry_of_run_id is not None:
         common_input["retry_of_run_id"] = int(retry_of_run_id)
 
+    material_cards = [
+        card
+        for card in db.list_evidence_cards(project_id)
+        if int(card.get("material_id") or 0) == material_id
+    ]
     if retry_evidence:
-        existing_segment_ids = {
-            int(card["segment_id"])
-            for card in db.list_evidence_cards(project_id)
-            if int(card.get("material_id") or 0) == material_id
-        }
-        missing_segments = [
-            segment
-            for segment in segments
-            if int(segment["id"]) not in existing_segment_ids
-        ]
-        if not missing_segments:
+        if material_cards:
             skipped.append("evidence_cards_complete")
         else:
             run_input = {
                 **common_input,
-                "missing_segment_ids": [int(item["id"]) for item in missing_segments],
+                "source_segment_ids": [int(item["id"]) for item in segments],
             }
             try:
                 model_segments, full_card_segments = _model_generation_candidates(
                     material_id,
-                    missing_segments,
+                    segments,
                     str(material.get("source_role") or ""),
                 )
                 advice = request_evidence_card_generation(
@@ -519,12 +522,11 @@ def retry_material_model_processing(
                     consent_status=material.get("consent_status"),
                     source_role=str(material.get("source_role") or ""),
                     context=str(material.get("context") or ""),
-                    max_cards=len(missing_segments),
-                    require_full_segment_coverage=True,
+                    max_cards=min(len(segments), _MAX_EVIDENCE_CARDS_PER_MATERIAL),
                 )
                 drafts = _model_card_drafts(material_id, full_card_segments, advice)
-                if len(drafts) != len(missing_segments):
-                    raise ValueError(f"材料 M{material_id} 未能覆盖全部缺失片段。")
+                if not drafts:
+                    raise ValueError(f"材料 M{material_id} 中没有找到适合单独审核的事实性证据卡。")
                 for draft in drafts:
                     created_evidence_ids.append(
                         db.create_evidence_card(
@@ -538,6 +540,11 @@ def retry_material_model_processing(
                             review_status=ReviewStatus.DRAFT.value,
                         )
                     )
+                material_cards = [
+                    card
+                    for card in db.list_evidence_cards(project_id)
+                    if int(card.get("material_id") or 0) == material_id
+                ]
                 db.create_agent_run(
                     project_id,
                     "llm_evidence_card_generation",
@@ -578,9 +585,17 @@ def retry_material_model_processing(
         existing_candidates = []
         existing_keys: set[tuple[str, tuple[int, ...]]] = set()
         run_input = {**common_input, "existing_candidate_count": len(existing_keys)}
+        candidate_segment_ids = {int(card["segment_id"]) for card in material_cards}
+        candidate_segments = [
+            segment for segment in segments if int(segment["id"]) in candidate_segment_ids
+        ]
+        if not candidate_segments:
+            skipped.append("claim_candidates_no_evidence")
+            retry_claim_candidates = False
+    if retry_claim_candidates:
         try:
             advice = request_material_claim_candidates(
-                segments,
+                candidate_segments,
                 source_role=str(material.get("source_role") or ""),
                 context=str(material.get("context") or ""),
                 config=llm_settings,

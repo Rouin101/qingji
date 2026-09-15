@@ -30,7 +30,6 @@ from qingji.ui import (
     render_sidebar_note,
 )
 from qingji.workflow import (
-    complete_missing_material_evidence_cards,
     import_text_material,
     list_regenerable_rejected_evidence_cards,
     regenerate_rejected_material_evidence_cards,
@@ -207,28 +206,32 @@ with tab_import:
 
     upload_lock_key = "single_material_upload_lock"
     uploader_widget_key = "single_material_file"
+    selected_upload = st.file_uploader(
+        "上传一个文字文件（可选，可删除或替换）",
+        type=["txt", "md", "docx", "pdf"],
+        key=uploader_widget_key,
+        help=(
+            "文字、Word 和 PDF 文件会先在本地读取，不会自动发送到云端。"
+            "点击文件右侧的 × 可以清除；再次选择文件会替换当前文件。"
+        ),
+    )
     locked_upload = st.session_state.get(upload_lock_key)
     uploaded_name = ""
     uploaded_bytes = b""
-    if isinstance(locked_upload, dict):
-        uploaded_name = str(locked_upload.get("name") or "")
-        uploaded_bytes = locked_upload.get("content") or b""
-        if not isinstance(uploaded_bytes, bytes):
-            uploaded_bytes = b""
-        if not uploaded_name or not uploaded_bytes:
-            st.session_state.pop(upload_lock_key, None)
-    selected_upload = st.file_uploader(
-        "上传文字文件（可选）",
-        type=["txt", "md", "docx", "pdf"],
-        key=uploader_widget_key,
-        disabled=bool(uploaded_name),
-        help="文字、Word 和 PDF 文件会先在本地读取，不会自动发送到云端。选中一个文件后将锁定，避免误覆盖。",
-    )
-    if not uploaded_name and selected_upload is not None:
+    if selected_upload is not None:
+        uploaded_name = selected_upload.name
+        uploaded_bytes = selected_upload.getvalue()
         st.session_state[upload_lock_key] = {
-            "name": selected_upload.name,
-            "content": selected_upload.getvalue(),
+            "name": uploaded_name,
+            "content": uploaded_bytes,
         }
+    elif isinstance(locked_upload, dict):
+        # Streamlit clears the widget when the user clicks the native ×. Clear
+        # the extracted text and metadata too so deleted content cannot remain.
+        st.session_state.pop(upload_lock_key, None)
+        st.session_state.pop("material_metadata_fingerprint", None)
+        for key, default in _MATERIAL_IMPORT_STATE_DEFAULTS.items():
+            st.session_state[key] = default
         st.rerun()
 
     uploaded_text = ""
@@ -646,48 +649,6 @@ with tab_review:
         )
         st.caption("已确认授权且未被人工排除的证据卡会进入结论核验；待复核卡也可参与。")
 
-    covered_segment_ids = {
-        int(card["segment_id"])
-        for card in all_cards
-        if card.get("consent_status") == "confirmed"
-    }
-    uncovered_segments = [
-        segment
-        for material in db.list_materials(project_id)
-        if material.get("consent_status") == "confirmed"
-        for segment in db.list_segments(int(material["id"]))
-        if int(segment["id"]) not in covered_segment_ids
-    ]
-    if uncovered_segments:
-        with st.expander("补齐既有材料的片段证据卡", expanded=True):
-            st.caption(
-                f"检测到 {len(uncovered_segments)} 个已确认授权片段尚无证据卡。"
-                "补齐会为每个缺失片段生成一张待复核但可引用的卡，并重新核验已有结论；"
-                "不会改动已有卡片或审核历史。"
-            )
-            complete_coverage = st.button(
-                "为全部缺失片段生成证据卡",
-                type="primary",
-                disabled=not llm_settings.configured,
-                key=f"complete_evidence_coverage_{project_id}",
-            )
-            if not llm_settings.configured:
-                st.info("配置并重启大模型服务后，可在这里补齐既有材料。")
-            if complete_coverage:
-                try:
-                    with st.spinner("正在逐片段生成证据卡并重新核验结论……"):
-                        coverage_results = complete_missing_material_evidence_cards(
-                            db, project_id
-                        )
-                except Exception as exc:
-                    st.error(f"补齐片段证据卡失败：{exc}")
-                else:
-                    card_count = sum(
-                        len(item.evidence_card_ids) for item in coverage_results
-                    )
-                    st.success(f"已补齐 {card_count} 张证据卡，并重新核验当前项目的历史结论。")
-                    st.rerun()
-
     authorized_draft_cards = [
         card
         for card in all_cards
@@ -767,8 +728,9 @@ with tab_review:
                 notice_message = llm_review_notice.get("message", "")
                 getattr(st, notice_level, st.info)(notice_message)
             st.caption(
-                "模型只会读取再次脱敏后的已授权证据卡，并返回人工确认或排除建议。"
-                "勾选确认后，模型结果会直接写入审核状态。"
+                "模型只会读取再次脱敏后的已授权证据卡，核对卡片是否忠实于原文。"
+                "材料存在样本局限并不等于卡片无效；局限会保留为不确定性。"
+                "勾选确认后，模型建议会直接写入审核状态。"
             )
             trust_model = st.checkbox(
                 "我确认信任本次大模型审核结果，并允许其自动写入审核状态。",
@@ -868,7 +830,7 @@ with tab_review:
                         for result in results:
                             rechecked_claim_ids.update(result.rechecked_claim_ids)
                 completion_message = (
-                    f"模型审核完成：人工确认 {approved_count} 张，"
+                    f"模型审核完成：建议确认 {approved_count} 张，"
                     f"排除 {rejected_count} 张，"
                     f"重新核验结论 {len(rechecked_claim_ids)} 条。"
                 )

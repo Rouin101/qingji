@@ -404,7 +404,7 @@ class WorkflowTestCase(unittest.TestCase):
             len(model_candidates), len(self.db.list_segments(result.material_id))
         )
         self.assertEqual(result.evidence_card_ids, [])
-        self.assertTrue(any("全部片段对应" in warning for warning in result.warnings))
+        self.assertTrue(any("适合单独审核" in warning for warning in result.warnings))
 
     def test_unauthorized_material_has_no_cards_and_is_not_citable(self) -> None:
         result = self._import(DIFFICULTY_TEXT, consent="unknown")
@@ -895,8 +895,9 @@ class WorkflowTestCase(unittest.TestCase):
             )
 
         segments = self.db.list_segments(result.material_id)
-        self.assertEqual(len(segments), len(result.evidence_card_ids))
-        self.assertFalse(any("由模型生成" in warning for warning in result.warnings))
+        self.assertLessEqual(len(result.evidence_card_ids), 40)
+        self.assertLess(len(result.evidence_card_ids), len(segments))
+        self.assertTrue(any("由模型生成" in warning for warning in result.warnings))
         card_quotes = "\n".join(
             self.db.get_evidence_card(card_id)["quote"]
             for card_id in result.evidence_card_ids

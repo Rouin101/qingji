@@ -9,13 +9,19 @@ from collections.abc import Mapping
 from .models import ClaimEvaluation, EvidenceCandidate, EvidenceType, Verdict
 from .retrieval import RetrievalMatch, normalize_semantics, rank_evidence_with_explanations
 
-CLAIM_RULE_VERSION = "conservative_boundaries_v2"
-_QUANTITY = re.compile(r"(?:\d+(?:\.\d+)?|[零〇一二两三四五六七八九十百千万]+)\s*(?:%|％|成|倍|人|份|次(?!说明|告知)|个|元|天|小时|分钟)")
+CLAIM_RULE_VERSION = "conservative_boundaries_v3"
+_QUANTITY = re.compile(r"(?<!第)(?:\d+(?:\.\d+)?|[零〇一二两三四五六七八九十百千万]+)\s*(?:%|％|成|倍|人|份|次(?!说明|告知)|个|元|天|小时|分钟)")
 _NEGATION = re.compile(r"(?:并非|没有|禁止|取消|不|未)(?=不|在|开放|提供|增加|减少|延长|完成|参加|支持|允许|开展|通过|改善|解决|存在|需要|使用|收到|找到|帮助|提升|降低|保留|认可|同意|满意|成功)")
 _EXISTENTIAL = re.compile(r"(?:一名|一位|一个|有些|部分|个别|有)(?:模拟)?(?:受访者|居民|用户|学生|访客|参与者)")
 
 
-def _boundary_relation(claim: str, quote: str, relation: str) -> tuple[str, str]:
+def _boundary_relation(
+    claim: str,
+    quote: str,
+    relation: str,
+    *,
+    semantic_support: bool = False,
+) -> tuple[str, str]:
     """Veto unsafe relations, including model advice, using the source quote.
 
     Only identical propositions with a changed number/negation are treated as
@@ -45,8 +51,15 @@ def _boundary_relation(claim: str, quote: str, relation: str) -> tuple[str, str]
         if not quantities.issubset(source_quantities):
             same_statement = _QUANTITY.sub("#", query) == _QUANTITY.sub("#", source)
             return ("contradict" if same_statement else "context"), "核对原文中的具体数量、单位与统计口径"
-        if query not in source:
+        if query not in source and not semantic_support:
             return "context", "数量相同不等于统计对象相同，请核对数量对应的完整表述"
+        if (
+            query not in source
+            and semantic_support
+            and re.search(r"(?:实际|实到|最终|仅有|只有)", source)
+            and len(source_quantities) > len(quantities)
+        ):
+            return "context", "原文含有实际值或限制值，请核对数量对应的完整表述"
 
     query_negations = _NEGATION.findall(query)
     source_negations = _NEGATION.findall(source)
@@ -57,7 +70,7 @@ def _boundary_relation(claim: str, quote: str, relation: str) -> tuple[str, str]
     if query_negative != source_negative:
         if _NEGATION.sub("", query) == _NEGATION.sub("", source):
             return "contradict", "原文与结论的肯定、否定方向相反"
-        if relation == "support":
+        if relation == "support" and not semantic_support:
             return "context", "原文含有不同的否定表达，需要核对完整语义"
     return relation, ""
 
@@ -230,7 +243,17 @@ def evaluate_claim(
     relevant = [match for match in matches if match.score >= 0.08]
     claim_stance = _stance(claim_text)
     flags = detect_rule_flags(claim_text)
-    strongest_score = max((match.score for match in relevant), default=0.0)
+    # A copied conclusion or team synthesis can be lexically identical to the
+    # claim while remaining context-only.  It must not raise the comparison
+    # bar so high that the underlying interview or observation is discarded.
+    strongest_score = max(
+        (
+            match.score
+            for match in relevant
+            if match.candidate.evidence_type != EvidenceType.TEAM_ANALYSIS
+        ),
+        default=0.0,
+    )
     supporting: list[EvidenceCandidate] = []
     contradicting: list[EvidenceCandidate] = []
     context: list[EvidenceCandidate] = []
@@ -239,12 +262,19 @@ def evaluate_claim(
     for match in relevant:
         candidate = match.candidate
         relation = (relation_overrides or {}).get(int(candidate.id))
+        semantic_support = relation == "support"
         if relation not in {"support", "contradict", "context"}:
             relation = _relation(claim_stance, match)
+            semantic_support = False
         if candidate.evidence_type == EvidenceType.TEAM_ANALYSIS:
             relation = "context"
         else:
-            relation, note = _boundary_relation(claim_text, candidate.quote, relation)
+            relation, note = _boundary_relation(
+                claim_text,
+                candidate.quote,
+                relation,
+                semantic_support=semantic_support,
+            )
             if note:
                 boundary_notes.append(note)
         # Strong scope/causal/quantity claims need evidence tied to the main

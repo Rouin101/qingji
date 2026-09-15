@@ -235,7 +235,7 @@ class AppPageSmokeTest(unittest.TestCase):
         )
         self.assertTrue(any("已处理 2 个文件" in item.value for item in app.success))
 
-    def test_single_file_upload_is_locked_after_selection(self) -> None:
+    def test_single_file_upload_can_be_cleared_after_selection(self) -> None:
         database = get_database()
         project_id = database.create_project("单文件上传锁定页面检查")
 
@@ -252,10 +252,18 @@ class AppPageSmokeTest(unittest.TestCase):
 
         self.assertEqual(app.exception, [])
         uploader = app.file_uploader(key="single_material_file")
-        self.assertTrue(uploader.disabled)
+        self.assertFalse(uploader.disabled)
         self.assertIsNotNone(uploader.value)
-        self.assertFalse(
-            any(item.key == "clear_single_material_file" for item in app.button)
+
+        uploader.set_value(None)
+        app.run()
+
+        self.assertEqual(app.exception, [])
+        self.assertIsNone(app.file_uploader(key="single_material_file").value)
+        self.assertEqual(app.text_area(key="material_draft_text").value, "")
+        self.assertEqual(
+            app.text_input(key="material_filename").value,
+            "手工录入_项目记录.txt",
         )
 
     def test_switching_project_resets_material_import_draft_and_upload_lock(self) -> None:
@@ -273,7 +281,7 @@ class AppPageSmokeTest(unittest.TestCase):
             ("项目甲材料.txt", "项目甲的正文不应留到项目乙。".encode(), "text/plain")
         )
         app.run()
-        self.assertTrue(app.file_uploader(key="single_material_file").disabled)
+        self.assertFalse(app.file_uploader(key="single_material_file").disabled)
         self.assertIn("项目甲的正文", app.text_area(key="material_draft_text").value)
 
         app.session_state["qingji_project_id"] = second_project_id

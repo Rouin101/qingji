@@ -26,6 +26,14 @@ class MetadataSuggestionTests(unittest.TestCase):
         self.assertEqual(suggestion.source_role, "正式记录")
         self.assertIn("新沂徐州线上调研", suggestion.context)
 
+    def test_briefing_document_is_not_misclassified_as_staff_source(self) -> None:
+        suggestion = infer_material_metadata(
+            "简报汇总了工作人员访谈、现场观察和团队阶段发现。",
+            "校级数智法治基层服务实践团_中期简报_提交版.docx",
+        )
+
+        self.assertEqual(suggestion.source_role, "正式记录")
+
     def test_does_not_invent_missing_metadata(self) -> None:
         suggestion = infer_material_metadata("这是一段没有来源和时间的正文。", "材料.txt")
 
