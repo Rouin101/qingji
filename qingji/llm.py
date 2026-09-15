@@ -24,6 +24,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from .claims import detect_rule_flags
+from .evidence import is_retrievable_evidence
 from .config import LLMSettings, llm_settings
 from .models import ClaimEvaluation, ConsentStatus, EvidenceType, ReviewStatus
 from .privacy import redact_text
@@ -291,9 +292,7 @@ def _clean_text(value: Any, *, limit: int = _MAX_FIELD_CHARS) -> str:
 def _eligible_evidence(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     eligible: list[dict[str, Any]] = []
     for row in rows:
-        if _status(row.get("review_status")) != ReviewStatus.APPROVED.value:
-            continue
-        if _status(row.get("consent_status")) != ConsentStatus.CONFIRMED.value:
+        if not is_retrievable_evidence(row):
             continue
         try:
             evidence_id = int(row["id"])
@@ -302,6 +301,7 @@ def _eligible_evidence(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]
         eligible.append(
             {
                 "evidence_id": evidence_id,
+                "review_status": _status(row.get("review_status")),
                 "title": _clean_text(row.get("title")),
                 "quote": _clean_text(row.get("quote")),
                 "summary": _clean_text(row.get("summary")),
@@ -394,7 +394,7 @@ def build_claim_assistance_prompt(
         evidence_lines.append(line)
         used_chars += len(line) + 1
 
-    context = "\n".join(evidence_lines) or "（没有可供引用的已审核、已授权证据）"
+    context = "\n".join(evidence_lines) or "（没有已授权的可引用证据）"
     prompt = (
         "你是青迹的‘辅助建议’模块，不是事实裁判。只能根据给定材料提出保守建议，"
         "不得补造数字、人物、时间、地点或因果关系。四级核验结果由规则系统负责，"
@@ -442,7 +442,7 @@ def build_claim_evidence_review_prompt(
                 "segment_id": row.get("segment_id", row["evidence_id"]),
                 "source_role": row.get("source_role", ""),
                 "context": row.get("context", ""),
-                "review_status": "approved",
+                "review_status": row["review_status"],
                 "consent_status": "confirmed",
             }
         )
@@ -466,12 +466,12 @@ def build_claim_evidence_review_prompt(
     allowed_ids = {
         int(json.loads(line)["evidence_id"]) for line in evidence_lines
     }
-    context = "\n".join(evidence_lines) or "（没有可供复核的已审核、已授权证据）"
+    context = "\n".join(evidence_lines) or "（没有可供复核的已授权证据）"
     prompt = (
-        "你是青迹的证据语义蕴含判断模块，不是事实裁判。请只判断给定的、已经人工批准且"
+        "你是青迹的证据语义蕴含判断模块，不是事实裁判。请只判断给定的、未被人工排除且"
         "已确认授权的证据卡，是否能凭卡片本身直接支持、直接反驳当前结论，或只能作为背景。"
         "只有在对象、行为或状态、方向、量词/数量、范围、时间和场景均不矛盾且足以推出结论时，"
-        "才返回 support；只有卡片明确给出相反内容时，才返回 contradict。共享主题、词语或领域"
+        "才返回 support；只有卡片明确给出相反内容时，才返回 contradict。不同人的体验可同时成立，不得以另一人的顺利体验反驳“一名受访者遇到困难”。共享主题、词语或领域"
         "不构成蕴含：例如结论说“使用数字终端的人很少”，而卡片只介绍数字服务、平台功能或"
         "线上入口时，必须返回 context。信息不足、表述模糊或需要额外推断时也返回 context。"
         "团队分析不能单独证明受访者事实。四级核验结果仍由本地规则系统计算。请对每个给定"
@@ -512,9 +512,9 @@ def build_claim_candidate_prompt(
     allowed_ids = {
         int(json.loads(line)["evidence_id"]) for line in evidence_lines
     }
-    context = "\n".join(evidence_lines) or "（没有可供提取的已审核、已授权证据）"
+    context = "\n".join(evidence_lines) or "（没有可供提取的已授权证据）"
     prompt = (
-        "你是青迹的调研结论候选提取助手，不是事实裁判。请从给定的、已经人工批准且"
+        "你是青迹的调研结论候选提取助手，不是事实裁判。请从给定的、未被人工排除且"
         "已确认授权的脱敏证据中，提取受访者、工作人员、观察者或调研团队已经表达的"
         "主观评价、感受、判断、比较或观察结论。"
         "候选只供用户选择后再由系统核验，不是最终结论。不得补造人物、数量、时间、"
@@ -526,7 +526,7 @@ def build_claim_candidate_prompt(
         "JSON 字段必须为：candidates（数组，每项包含 claim_text、evidence_ids；"
         f"最多 {max_candidates} 项；evidence_ids 至少一个且只能使用给定 evidence_id 的整数）、"
         "uncertainties（最多 8 条）。claim_text 不超过 300 字，必须能由所列证据直接复核。\n\n"
-        "已批准证据（每行一个 JSON 对象）：\n"
+        "可引用证据（每行一个 JSON 对象）：\n"
         f"{context}"
     )
     return prompt, allowed_ids
@@ -597,8 +597,11 @@ def _default_post_json(
         with urlopen(request, timeout=timeout) as response:  # nosec B310 - URL is explicit config
             raw = response.read().decode("utf-8")
     except HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")[:500]
-        raise LLMRequestError(f"模型服务返回 HTTP {exc.code}：{detail}") from exc
+        # Provider bodies can echo credentials, so never include them in a
+        # user-visible or persisted error.
+        raise LLMRequestError(
+            f"模型服务返回 HTTP {exc.code}。请检查模型配置、额度或服务状态。"
+        ) from exc
     except URLError as exc:
         raise LLMRequestError(f"无法连接模型服务：{exc.reason}") from exc
     except TimeoutError as exc:
@@ -927,7 +930,7 @@ def request_claim_evidence_review(
         max_context_chars=current.max_context_chars,
     )
     if not allowed_ids:
-        raise LLMResponseError("当前没有可供模型复核的已审核、已授权证据。")
+        raise LLMResponseError("当前没有可供模型复核的可引用、已授权证据。")
     response = _call_chat_completion(
         prompt,
         config=current,
@@ -963,12 +966,12 @@ def request_claim_candidates(
 
     eligible = _subjective_claim_candidate_evidence(evidence_rows)
     if not eligible:
-        raise LLMResponseError("当前没有可供提取调研结论的已批准主观判断材料。")
+        raise LLMResponseError("当前没有可供提取调研结论的可引用主观判断材料。")
     bounded_rows = [
         {
             **item,
             "id": item["evidence_id"],
-            "review_status": ReviewStatus.APPROVED.value,
+            "review_status": item["review_status"],
             "consent_status": ConsentStatus.CONFIRMED.value,
         }
         for item in eligible

@@ -40,6 +40,25 @@ _PATTERNS: tuple[tuple[str, re.Pattern[str], str, int], ...] = (
     ),
 )
 
+_SECRET_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"(?i)\bsk-[A-Za-z0-9._-]{4,}"),
+    re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/-]{4,}=*"),
+    re.compile(
+        r"(?i)(?:api[_ -]?key|access[_ -]?token|authorization)"
+        r"\s*[:=]\s*[\"']?[^\s,;\"']{4,}"
+    ),
+)
+
+
+def sanitize_error_message(message: object, *, limit: int = 500) -> str:
+    """Return a short diagnostic that cannot reveal common credential forms."""
+
+    text = str(message or "").replace("\r", " ").replace("\n", " ")
+    for pattern in _SECRET_PATTERNS:
+        text = pattern.sub("[凭据已隐藏]", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[: max(0, int(limit))]
+
 
 @dataclass(frozen=True)
 class _Match:

@@ -70,7 +70,7 @@ def is_retrievable_evidence(row: Mapping[str, Any]) -> bool:
         row.get("consent_status"), "value", row.get("consent_status")
     )
     return (
-        review_status != ReviewStatus.REJECTED.value
+        review_status in {ReviewStatus.DRAFT.value, ReviewStatus.APPROVED.value}
         and consent_status == ConsentStatus.CONFIRMED.value
     )
 

@@ -48,7 +48,7 @@ class ClaimTests(unittest.TestCase):
         self.assertEqual(result.verdict, Verdict.PARTIALLY_SUPPORTED)
         self.assertEqual(result.supporting_evidence_ids, [7])
         self.assertIn("group_generalization", result.rule_flags)
-        self.assertIn("一份已审核材料", result.safe_rewrite)
+        self.assertIn("1份可引用材料", result.safe_rewrite)
         self.assertTrue(validate_citation_ids(result, {7}))
 
     def test_opposite_experience_is_detected_as_conflict(self) -> None:
@@ -64,13 +64,13 @@ class ClaimTests(unittest.TestCase):
         self.assertEqual(result.supporting_evidence_ids, [7])
         self.assertEqual(result.contradicting_evidence_ids, [8])
 
-    def test_draft_and_unapproved_sources_are_never_cited(self) -> None:
+    def test_rejected_sources_are_never_cited(self) -> None:
         claim = "线上办事平台使用困难"
         evidence = [
             candidate(
                 99,
                 "我使用线上办事平台时遇到困难。",
-                review_status=ReviewStatus.DRAFT,
+                review_status=ReviewStatus.REJECTED,
             )
         ]
 
@@ -109,7 +109,7 @@ class ClaimTests(unittest.TestCase):
         )
 
         self.assertNotEqual(result.safe_rewrite, claim + "。")
-        self.assertIn("已审核材料", result.safe_rewrite)
+        self.assertIn("可引用材料", result.safe_rewrite)
 
 
 if __name__ == "__main__":

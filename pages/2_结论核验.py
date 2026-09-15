@@ -6,6 +6,7 @@ import streamlit as st
 
 from qingji.config import llm_settings
 from qingji.demo import add_demo_supplement
+from qingji.diagnostics import claim_uses_current_rules
 from qingji.llm import (
     LLMConfigurationError,
     LLMError,
@@ -21,6 +22,7 @@ from qingji.ui import (
     evidence_card_html,
     format_datetime,
     get_demo_context,
+    render_demo_notice,
     is_demo_project,
     render_page_intro,
     render_sidebar_note,
@@ -93,6 +95,7 @@ render_page_intro(
     "02 · CLAIM CHECK",
     "结论核验",
 )
+render_demo_notice(project)
 demo_mode = is_demo_project(project)
 history_verdict_key = f"claim_history_verdict_{project_id}"
 history_query_key = f"claim_history_query_{project_id}"
@@ -334,6 +337,9 @@ if claim is None:
     st.stop()
 
 st.markdown("### 四级核验结果")
+uses_current_rules = claim_uses_current_rules(db, int(active_claim_id))
+if not uses_current_rules:
+    st.warning("这条结果由旧版规则生成。请重新核验后再引用或导出；下方暂保留历史结果。")
 legend = st.columns(4)
 for column, verdict in zip(
     legend,
@@ -370,7 +376,7 @@ relation_labels = {
 st.markdown("### 相关证据")
 linked_cards = []
 if not links:
-    empty_state("当前未找到可引用证据。未授权或未审核的材料不会出现在这里。")
+    empty_state("当前未找到可引用证据。未授权或已排除的材料不会出现在这里。")
     st.page_link(
         "pages/1_材料与证据.py",
         label="去材料与证据审核证据卡",
@@ -392,6 +398,45 @@ else:
             if link.get("rationale"):
                 st.caption(f"关联说明：{link['rationale']}")
 
+retrieval_run = db.get_latest_claim_run(
+    int(active_claim_id), "claim_retrieval"
+)
+retrieval_output = (retrieval_run or {}).get("output") or {}
+relation_counts = {
+    relation: sum(link.get("relation") == relation for link in links)
+    for relation in ("support", "contradict", "context")
+}
+open_task_count = sum(
+    task.get("status") == "open" for task in (claim.get("followup_tasks") or [])
+)
+
+st.markdown("### 智能体执行轨迹")
+trace_columns = st.columns(4)
+with trace_columns[0]:
+    st.markdown("**① 检索候选**")
+    st.caption(
+        f"从 {retrieval_output.get('eligible_count', len(linked_cards))} 条可引用证据中，"
+        f"筛出 {retrieval_output.get('relevant_count', len(links))} 条相关候选。"
+    )
+with trace_columns[1]:
+    st.markdown("**② 判断关系**")
+    st.caption(
+        f"支持 {relation_counts['support']} · 冲突 {relation_counts['contradict']} · "
+        f"背景 {relation_counts['context']}。"
+    )
+with trace_columns[2]:
+    st.markdown("**③ 执行边界**")
+    st.caption(
+        ("当前规则已核验" if uses_current_rules else "等待按当前规则重检")
+        + (f" · 触发 {len(rule_flags)} 项范围提醒" if rule_flags else " · 未触发范围提醒")
+    )
+with trace_columns[3]:
+    st.markdown("**④ 更新行动**")
+    st.caption(
+        f"结果：{VERDICT_LABELS.get(claim.get('verdict'), '尚未核验')} · "
+        f"待补证 {open_task_count} 项。"
+    )
+
 st.markdown("### 证据语义判断")
 latest_relation_run = db.get_latest_claim_run(
     int(active_claim_id), "llm_claim_evidence_review"
@@ -412,7 +457,7 @@ if not llm_settings.configured:
     )
 else:
     st.caption(
-        "系统只会读取已批准、已确认授权的脱敏证据卡。开始核验和重新核验时会自动写入"
+        "系统只会读取未被排除、已确认授权的脱敏证据卡。开始核验和重新核验时会自动写入"
         "语义关系；授权、人工审核、范围提醒和四级结论仍由本地规则控制。"
     )
 
@@ -443,7 +488,7 @@ if not llm_settings.configured:
     )
 else:
     st.caption(
-        "只有点击按钮后才会发送本条结论和已批准、已授权的脱敏证据；"
+        "只有点击按钮后才会发送本条结论和可引用、已授权的脱敏证据；"
         "模型建议不改变四级核验结果。"
     )
     request_advice = st.button(
@@ -501,9 +546,6 @@ if advice_data:
     render_claim_advice(advice_data, persisted=advice_persisted)
 
 st.markdown("### 检索诊断")
-retrieval_run = db.get_latest_claim_run(
-    int(active_claim_id), "claim_retrieval"
-)
 if retrieval_run is None:
     st.info("这条结论还没有检索诊断记录。重新核验后即可查看候选排序和排除原因。")
 else:
@@ -595,13 +637,13 @@ if tasks:
 st.markdown("### 补证与重新核验")
 if demo_mode:
     st.caption(
-        "下面的补充材料提供一个与原结论方向不同的观点，"
+        "下面的模拟补充材料提供一个与原结论方向不同的观点，"
         "用于观察结论状态如何随证据变化。"
     )
     action_left, action_right = st.columns(2)
     with action_left:
         add_supplement = st.button(
-            "加入不同观点材料",
+            "加入不同观点的模拟材料",
             type="primary",
             width="stretch",
             key=f"add_demo_supplement_{project_id}_{active_claim_id}",
@@ -627,13 +669,13 @@ else:
 
 if add_supplement:
     try:
-        with st.spinner("正在加入补充材料……"):
+        with st.spinner("正在加入模拟补充材料……"):
             supplement = add_demo_supplement(db, project_id)
     except Exception as exc:
         st.error(f"补充材料添加失败：{exc}")
     else:
         material_id = getattr(supplement, "material_id", supplement)
-        st.success(f"补充材料 M{material_id} 已加入，并已完成对应补证任务。")
+        st.success(f"模拟补充材料 M{material_id} 已加入，并已完成对应补证任务。")
         st.info("现在点击“重新核验当前结论”，观察是否出现相反证据。")
 
 if rerun_check:

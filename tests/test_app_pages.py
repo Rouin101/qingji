@@ -400,7 +400,9 @@ class AppPageSmokeTest(unittest.TestCase):
         self.assertEqual(app.exception, [])
         content = app.session_state["project_backup_payload"]
         inspection = inspect_project_backup(content)
-        self.assertEqual(inspection.source_project_name, "数字便民服务体验调研")
+        self.assertEqual(
+            inspection.source_project_name, "数字便民服务体验调研（模拟演示）"
+        )
         self.assertGreaterEqual(inspection.counts["materials"], 3)
         self.assertTrue(
             any("下载备份包" in button.label for button in app.get("download_button"))

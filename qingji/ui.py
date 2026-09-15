@@ -285,7 +285,7 @@ def get_next_action(progress: Mapping[str, Any]) -> dict[str, str]:
 
     materials = int(progress.get("materials", 0) or 0)
     evidence_cards = int(progress.get("evidence_cards", 0) or 0)
-    approved_cards = int(
+    eligible_cards = int(
         progress.get(
             "eligible_evidence_cards",
             progress.get("approved_evidence_cards", 0),
@@ -310,12 +310,15 @@ def get_next_action(progress: Mapping[str, Any]) -> dict[str, str]:
             "button": "去处理材料",
             "page": NEXT_ACTION_PAGES["materials"],
         }
-    if evidence_cards > approved_cards:
+    reviewable_drafts = progress.get("reviewable_draft_evidence_cards")
+    if reviewable_drafts is None:
+        reviewable_drafts = max(0, evidence_cards - eligible_cards)
+    if int(reviewable_drafts or 0) > 0:
         return {
             "key": "materials",
-            "title": "审核待处理的证据卡",
-            "detail": "只有已确认授权且已批准的证据，才能进入结论核验。",
-            "button": "去审核证据卡",
+            "title": "复核可引用的证据草稿",
+            "detail": "草稿已可进入核验；人工确认能进一步提高报告可信度。",
+            "button": "去复核证据卡",
             "page": NEXT_ACTION_PAGES["materials"],
         }
     if claims == 0:
@@ -368,7 +371,7 @@ def render_sidebar_note(
         st.page_link("pages/1_材料与证据.py", label="材料与证据")
         st.page_link("pages/2_结论核验.py", label="结论核验")
         st.page_link("pages/3_成果与缺口.py", label="成果与缺口")
-        st.page_link("pages/4_模型运行中心.py", label="模型运行中心")
+        st.page_link("pages/4_模型运行中心.py", label="运行与恢复")
         st.divider()
         st.markdown("### 青迹")
         st.caption("让实践有迹可循，让结论有据可查。")
@@ -397,7 +400,17 @@ def render_sidebar_note(
                 "</div>",
                 unsafe_allow_html=True,
             )
-        st.caption("v1.2 · 开发版")
+        st.caption("v1.3 · 参赛版")
+
+
+def render_demo_notice(project: Mapping[str, Any] | None) -> None:
+    """Make the built-in project's fictional boundary impossible to miss."""
+
+    if is_demo_project(project):
+        st.info(
+            "🧪 **模拟演示项目**｜全部人物、材料、日期与授权状态均为虚构数据，"
+            "只用于展示产品流程，不代表真实调研结果。"
+        )
 
 
 def row_to_dict(row: Any) -> dict[str, Any]:
@@ -480,6 +493,7 @@ def evidence_card_html(card: Any) -> str:
     locator = data.get("source_locator") or data.get("locator") or "位置待补充"
     consent = label(CONSENT_LABELS, data.get("consent_status"))
     review = label(REVIEW_STATUS_LABELS, data.get("review_status"))
+    simulation = " · 模拟演示数据" if bool(data.get("is_fictional")) else ""
     return (
         '<div class="qj-card">'
         f'<div class="qj-card-label">E{escape_html(evidence_id)} · '
@@ -489,7 +503,7 @@ def evidence_card_html(card: Any) -> str:
         f'<div class="qj-meta">来源角色：{escape_html(role)} · '
         f"场景：{escape_html(context)}<br>"
         f"定位：{escape_html(locator)} · {escape_html(consent)} · "
-        f"{escape_html(review)}</div>"
+        f"{escape_html(review)}{escape_html(simulation)}</div>"
         "</div>"
     )
 

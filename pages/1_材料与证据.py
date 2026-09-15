@@ -25,6 +25,7 @@ from qingji.ui import (
     evidence_card_html,
     format_datetime,
     get_demo_context,
+    render_demo_notice,
     render_page_intro,
     render_sidebar_note,
 )
@@ -175,6 +176,7 @@ render_page_intro(
     "01 · MATERIALS & EVIDENCE",
     "材料与证据",
 )
+render_demo_notice(project)
 saved_evidence_advice: dict[int, dict] = {}
 for run in db.list_project_runs(
     project_id, "llm_evidence_assistance", limit=200

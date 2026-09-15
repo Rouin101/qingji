@@ -7,6 +7,7 @@ import re
 from collections import Counter
 from dataclasses import dataclass, replace
 from typing import Any, Mapping
+from .evidence import is_retrievable_evidence
 
 from .models import (
     ConsentStatus,
@@ -179,10 +180,10 @@ def evidence_candidate_from_mapping(
 
 
 def is_retrievable(candidate: EvidenceCandidate) -> bool:
-    return (
-        _status_value(candidate.review_status) == ReviewStatus.APPROVED.value
-        and _status_value(candidate.consent_status) == ConsentStatus.CONFIRMED.value
-    )
+    return is_retrievable_evidence({
+        "review_status": candidate.review_status,
+        "consent_status": candidate.consent_status,
+    })
 
 
 def _candidate_text(candidate: EvidenceCandidate) -> str:

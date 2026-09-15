@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
 from .evidence import is_retrievable_evidence
+from .claims import CLAIM_RULE_VERSION
 
 from .models import ClaimEvaluation
 from .retrieval import (
@@ -14,9 +15,18 @@ from .retrieval import (
 )
 
 
-RETRIEVAL_DIAGNOSTIC_VERSION = "local_weighted_ngram_v2"
+RETRIEVAL_DIAGNOSTIC_VERSION = "local_weighted_ngram_v3"
 RELEVANCE_THRESHOLD = 0.08
 MAX_EVALUATION_CANDIDATES = 8
+
+
+def claim_uses_current_rules(db: Any, claim_id: int) -> bool:
+    run = db.get_latest_claim_run(int(claim_id), "claim_retrieval")
+    output = (run or {}).get("output") or {}
+    return (
+        output.get("version") == RETRIEVAL_DIAGNOSTIC_VERSION
+        and output.get("claim_rule_version") == CLAIM_RULE_VERSION
+    )
 
 
 def build_retrieval_diagnostic(
@@ -126,6 +136,7 @@ def build_retrieval_diagnostic(
     )
     return {
         "version": RETRIEVAL_DIAGNOSTIC_VERSION,
+        "claim_rule_version": CLAIM_RULE_VERSION,
         "query": claim_text,
         "query_keywords": sorted(extract_keywords(claim_text)),
         "query_ngrams": sorted(chinese_ngrams(claim_text))[:20],

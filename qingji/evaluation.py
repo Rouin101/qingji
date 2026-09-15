@@ -10,6 +10,7 @@ import json
 import re
 from typing import Any, Iterable, Mapping
 
+from .evidence import is_retrievable_evidence
 from .diagnostics import RETRIEVAL_DIAGNOSTIC_VERSION
 from .retrieval_eval import RetrievalEvalCase, evaluate_retrieval
 
@@ -238,7 +239,7 @@ def build_evidence_set_id(
             getattr(row.get("consent_status"), "value", row.get("consent_status"))
             or ""
         )
-        if review_status != "approved" or consent_status != "confirmed":
+        if not is_retrievable_evidence(row):
             continue
         try:
             evidence_id = int(row["id"])
@@ -486,7 +487,7 @@ def export_eval_run_markdown(
     lines = [
         f"# 青迹检索评测｜{_markdown_cell(project_name)}",
         "",
-        "> 检索评测通过率只说明当前授权、已审核证据集下的本地检索表现，"
+        "> 检索评测通过率只说明当前授权、可引用证据集下的本地检索表现，"
         "不是事实正确率，也不是外部基准成绩。",
         "",
         f"- 运行编号：R{meta['run_id']}",
@@ -559,8 +560,7 @@ def build_eval_template(
     eligible = [
         row
         for row in evidence_rows
-        if row.get("review_status") == "approved"
-        and row.get("consent_status") == "confirmed"
+        if is_retrievable_evidence(row)
     ]
     buffer = io.StringIO()
     writer = csv.DictWriter(buffer, fieldnames=EVAL_CSV_COLUMNS)
@@ -610,9 +610,9 @@ def run_project_retrieval_eval(
                 raise ValueError(
                     f"用例“{case.name}”引用的 E{evidence_id} 不属于当前项目。"
                 )
-            if row.get("review_status") != "approved":
+            if row.get("review_status") not in {"draft", "approved"}:
                 raise ValueError(
-                    f"用例“{case.name}”引用的 E{evidence_id} 尚未人工批准。"
+                    f"用例“{case.name}”引用的 E{evidence_id} 已被排除或状态无效。"
                 )
             if row.get("consent_status") != "confirmed":
                 raise ValueError(

@@ -14,7 +14,19 @@ class NextActionGuidanceTest(unittest.TestCase):
             {"materials": 2, "evidence_cards": 3, "approved_evidence_cards": 1}
         )
         self.assertEqual(action["key"], "materials")
-        self.assertEqual(action["button"], "去审核证据卡")
+        self.assertEqual(action["button"], "去复核证据卡")
+
+    def test_rejected_or_unauthorized_cards_do_not_create_false_review_action(self):
+        action = get_next_action(
+            {
+                "materials": 2,
+                "evidence_cards": 3,
+                "eligible_evidence_cards": 1,
+                "reviewable_draft_evidence_cards": 0,
+                "claims": 0,
+            }
+        )
+        self.assertEqual(action["key"], "claims")
 
     def test_guides_completed_project_to_output(self):
         action = get_next_action(

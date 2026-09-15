@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from qingji.privacy import redact_text
+from qingji.privacy import redact_text, sanitize_error_message
 
 
 class PrivacyTests(unittest.TestCase):
@@ -41,6 +41,16 @@ class PrivacyTests(unittest.TestCase):
 
         self.assertFalse(result.found_sensitive_data)
         self.assertEqual(result.redacted_text, "今天完成了两次现场观察。")
+
+    def test_error_message_hides_credentials_and_collapses_lines(self) -> None:
+        result = sanitize_error_message(
+            'HTTP 401\napi_key="sk-secret123456" Authorization: Bearer tokenABC123'
+        )
+
+        self.assertNotIn("secret123456", result)
+        self.assertNotIn("tokenABC123", result)
+        self.assertNotIn("\n", result)
+        self.assertIn("[凭据已隐藏]", result)
 
 
 if __name__ == "__main__":

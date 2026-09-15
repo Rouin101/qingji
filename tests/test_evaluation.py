@@ -179,7 +179,7 @@ class CustomEvaluationTests(unittest.TestCase):
                 (
                     evidence_a,
                     evidence_b,
-                    {**evidence_a, "id": 3, "review_status": "draft"},
+                    {**evidence_a, "id": 3, "review_status": "rejected"},
                 )
             ),
         )

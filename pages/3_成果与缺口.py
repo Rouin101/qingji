@@ -8,6 +8,9 @@ from pathlib import Path
 import streamlit as st
 
 from qingji.artifacts import EXPORT_FORMAT_LABELS
+from qingji.evidence import is_retrievable_evidence
+from qingji.diagnostics import claim_uses_current_rules
+from qingji.workflow import recheck_project_claims
 from qingji.evaluation import (
     build_eval_history_rows,
     build_eval_template,
@@ -30,6 +33,7 @@ from qingji.ui import (
     empty_state,
     format_datetime,
     get_demo_context,
+    render_demo_notice,
     render_page_intro,
     render_sidebar_note,
 )
@@ -111,6 +115,7 @@ render_page_intro(
     "03 · OUTPUT & GAPS",
     "成果与缺口",
 )
+render_demo_notice(project)
 
 summary_columns = st.columns(4)
 summary_columns[0].metric("核验记录", len(claims))
@@ -363,6 +368,17 @@ with tab_mapping:
 
 with tab_export:
     st.markdown("### 导出可信成果")
+    stale_claims = [item for item in claims if not claim_uses_current_rules(db, int(item["id"]))]
+    if stale_claims:
+        st.warning(f"有 {len(stale_claims)} 条历史结论尚未按新版规则核验，请先更新再导出。")
+        if st.button("按新版规则重新核验当前项目", key="refresh_claim_rules"):
+            try:
+                with st.spinner("正在更新结论、证据关系与补证任务……"):
+                    recheck_project_claims(db, project_id)
+            except Exception as exc:
+                st.error(f"重新核验失败：{exc}")
+            else:
+                st.rerun()
     st.caption(
         "成果报告版只写入你勾选的结论与任务；完整审计版保留当前项目的完整证据链。"
         "两种版本均只引用已脱敏、已确认授权且未被人工排除的证据。"
@@ -472,14 +488,13 @@ with tab_eval:
     st.markdown("### 自定义检索评测")
     st.caption(
         "评测只在本地运行并保存到当前项目。目标证据必须属于当前项目，"
-        "且已确认授权、已人工批准。评测成绩不能替代真实项目上的人工检查。"
+        "且已确认授权、未被人工排除。评测成绩不能替代真实项目上的人工检查。"
     )
     evidence_rows = db.list_evidence_cards(project_id)
     eligible_rows = [
         row
         for row in evidence_rows
-        if row.get("review_status") == "approved"
-        and row.get("consent_status") == "confirmed"
+        if is_retrievable_evidence(row)
     ]
     st.metric("当前可作为评测目标的证据", len(eligible_rows))
     if eligible_rows:
@@ -497,7 +512,7 @@ with tab_eval:
                 hide_index=True,
             )
     else:
-        empty_state("当前没有已授权、已批准的证据，暂时无法建立目标召回用例。")
+        empty_state("当前没有已授权、可引用的证据，暂时无法建立目标召回用例。")
 
     st.download_button(
         "下载当前项目的 CSV 模板",
@@ -685,5 +700,5 @@ with tab_eval:
         )
         st.warning(
             "检索评测通过率不是事实正确率，也不是外部基准成绩；"
-            "它只反映当前项目中已授权、已审核证据集上的本地检索表现。"
+            "它只反映当前项目中已授权、可引用证据集上的本地检索表现。"
         )

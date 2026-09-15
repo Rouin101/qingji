@@ -28,9 +28,9 @@ _EVIDENCE_LABELS = {
 }
 
 _REVIEW_LABELS = {
-    "draft": "待审核",
-    "approved": "已批准",
-    "rejected": "已拒绝",
+    "draft": "待复核（可引用）",
+    "approved": "人工确认",
+    "rejected": "已排除",
 }
 
 _REVIEW_FIELD_LABELS = {
@@ -148,6 +148,13 @@ def render_project_markdown(
         "> 仅包含已授权且未被人工排除的脱敏证据；使用前仍需项目成员复核。",
         "",
     ]
+    if any(bool(item.get("is_fictional")) for item in safe_evidence.values()):
+        lines.extend(
+            (
+                "> ⚠️ 本文档包含明确标注的模拟演示数据；相关人物、事件、日期与授权状态均不代表现实事实。",
+                "",
+            )
+        )
     description = str(project_data.get("description", "")).strip()
     if description:
         lines.extend(("## 项目说明", "", description, ""))
@@ -211,6 +218,8 @@ def render_project_markdown(
                 f"### E{evidence_id}｜{evidence.get('title') or '证据卡'}",
                 "",
                 f"- 类型：{_EVIDENCE_LABELS.get(evidence_type, evidence_type)}",
+                f"- 复核状态：{_REVIEW_LABELS.get(_enum_value(evidence.get('review_status')), '未知')}",
+                f"- 数据性质：{'模拟演示数据' if evidence.get('is_fictional') else '项目材料'}",
                 f"- 来源角色：{evidence.get('source_role') or '未记录'}",
                 f"- 场景：{evidence.get('context') or '未记录'}",
                 f"- 来源定位：{evidence.get('source_locator') or evidence.get('locator') or '未记录'}",
@@ -279,7 +288,7 @@ def render_project_markdown(
             "",
             "---",
             "",
-            "由青迹 v1.0 本地可信证据链流程生成。",
+            "由青迹 v1.3 本地可信证据链流程生成。",
             "",
         )
     )

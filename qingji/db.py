@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Iterator, Mapping, Sequence
 
 from .config import settings
+from .privacy import sanitize_error_message
 
 
 def _utc_now() -> str:
@@ -1446,7 +1447,7 @@ class Database:
                     status,
                     _json(input_data, {}),
                     _json(output_data, {}),
-                    error_message,
+                    sanitize_error_message(error_message),
                     now,
                     finished_at or (now if status == "completed" else None),
                 ),
@@ -1556,7 +1557,14 @@ class Database:
                         JOIN materials m ON m.id = s.material_id
                         WHERE ec.project_id = :project_id
                           AND ec.review_status != 'rejected'
-                          AND m.consent_status = 'confirmed') AS eligible_evidence_cards,
+                           AND m.consent_status = 'confirmed') AS eligible_evidence_cards,
+                    (SELECT COUNT(*) FROM evidence_cards ec
+                        JOIN segments s ON s.id = ec.segment_id
+                        JOIN materials m ON m.id = s.material_id
+                        WHERE ec.project_id = :project_id
+                          AND ec.review_status = 'draft'
+                          AND m.consent_status = 'confirmed')
+                        AS reviewable_draft_evidence_cards,
                     (SELECT COUNT(*) FROM claims
                         WHERE project_id = :project_id) AS claims,
                     (SELECT COUNT(*) FROM followup_tasks t

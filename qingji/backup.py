@@ -21,6 +21,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Mapping
 
 from .projects import _normalized_project_fields
+from .privacy import sanitize_error_message
 
 
 BACKUP_FORMAT = "qingji-project-backup"
@@ -210,6 +211,9 @@ def export_project_backup(db: Any, project_id: int) -> ProjectBackup:
                 (int(project_id),),
             ),
         }
+
+    for run in data["agent_runs"]:
+        run["error_message"] = sanitize_error_message(run.get("error_message"))
 
     material_files = _managed_material_files(db, data["materials"])
     raw_material_ids = {
@@ -935,7 +939,7 @@ def restore_project_backup(db: Any, content: bytes, restored_name: str) -> Proje
                         row.get("status"),
                         input_json,
                         output_json,
-                        row.get("error_message") or "",
+                        sanitize_error_message(row.get("error_message")),
                         row.get("created_at") or _utc_now(),
                         row.get("finished_at"),
                     ),

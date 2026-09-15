@@ -135,6 +135,7 @@ def render_outcome_report_markdown(
             f"### E{evidence_id}｜{_text(evidence.get('title'), '证据卡')}",
             "",
             f"- 来源角色：{_text(evidence.get('source_role'))}",
+            f"- 复核状态：{'人工确认' if evidence.get('review_status') == 'approved' else '待复核（可引用）'}",
             f"- 来源定位：{_text(evidence.get('source_locator') or evidence.get('locator'))}",
             f"> {_text(evidence.get('quote'), '（无摘录）')}",
             "",

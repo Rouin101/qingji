@@ -28,6 +28,7 @@ from qingji.ui import (
     get_demo_context,
     is_demo_project,
     render_page_intro,
+    render_demo_notice,
     render_sidebar_note,
     verdict_box,
 )
@@ -47,6 +48,28 @@ render_page_intro(
     "QINGJI · 可信社会实践",
     "青迹",
 )
+render_demo_notice(project)
+
+if is_demo_project(project):
+    st.markdown("### 3 分钟体验")
+    demo_steps = st.columns(4)
+    for column, (number, title, detail) in zip(
+        demo_steps,
+        (
+            ("01", "查看材料", "确认来源与模拟标识"),
+            ("02", "核验结论", "观察边界检查"),
+            ("03", "补充观点", "触发状态变化"),
+            ("04", "导出成果", "检查完整证据链"),
+        ),
+    ):
+        with column:
+            st.markdown(f"**{number} · {title}**")
+            st.caption(detail)
+    st.page_link(
+        "pages/1_材料与证据.py",
+        label="开始 3 分钟体验",
+        icon="▶️",
+    )
 
 st.markdown("### 项目工作区")
 projects = db.list_projects()
@@ -319,17 +342,11 @@ except Exception as exc:
 
 metric_columns = st.columns(5)
 metric_columns[0].metric("材料", stats.get("materials", 0))
-metric_columns[1].metric("已审核证据", stats.get("approved_evidence_cards", 0))
-metric_columns[2].metric("已核验结论", stats.get("claims", 0))
-metric_columns[3].metric("待补证任务", stats.get("open_followup_tasks", 0))
-metric_columns[4].metric(
-    "证据可引用率",
-    (
-        f"{stats.get('approved_evidence_cards', 0) / stats.get('evidence_cards', 1):.0%}"
-        if stats.get("evidence_cards", 0)
-        else "—"
-    ),
-)
+metric_columns[1].metric("可引用证据", stats.get("eligible_evidence_cards", 0))
+metric_columns[2].metric("人工确认", stats.get("approved_evidence_cards", 0))
+metric_columns[3].metric("已核验结论", stats.get("claims", 0))
+metric_columns[4].metric("待补证任务", stats.get("open_followup_tasks", 0))
+st.caption("可引用证据包括已确认授权且未被排除的草稿；报告仍应优先使用人工确认的证据卡。")
 
 st.markdown("#### 结论状态分布")
 verdict_columns = st.columns(4)
@@ -377,19 +394,29 @@ with boundary_columns[1]:
 with boundary_columns[2]:
     st.markdown(
         """
-        **先审核、再下结论**
+        **先复核、再对外使用**
 
-        证据卡必须经人工批准；个人陈述不能自动推广成群体事实。
+        授权且未被排除的证据可参与核验；对外报告应优先人工确认，个人陈述不能推广为群体事实。
         """
     )
 
 if is_demo_project(project):
-    with st.expander("当前项目的使用路径"):
+    with st.expander("完整体验路径与讲解提示"):
         st.markdown(
             """
-            1. 在“材料与证据”查看已授权、已脱敏的项目材料。
+            1. 在“材料与证据”查看明确标注的模拟材料和证据卡。
             2. 核验“当地居民普遍认为线上办事平台使用困难”。
-            3. 添加一份持不同观点的补充材料，重新核验。
+            3. 加入一份持不同观点的模拟材料，重新核验并观察状态变化。
             4. 在“成果与缺口”下载可追溯的 Markdown。
             """
         )
+
+    st.markdown("### 可信性自检")
+    benchmark_columns = st.columns(3)
+    benchmark_columns[0].metric("模拟材料", "20 份")
+    benchmark_columns[1].metric("均衡结论", "40 条")
+    benchmark_columns[2].metric("关键指标", "5 项")
+    st.caption(
+        "冻结内部回归集覆盖四级状态、检索召回、越界结论、隐私脱敏与引用有效性；"
+        "当前版本全部通过。该结果只代表可复现的模拟开发集，不代表外部真实准确率。"
+    )

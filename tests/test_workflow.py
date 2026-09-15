@@ -997,7 +997,7 @@ class WorkflowTestCase(unittest.TestCase):
         self.assertEqual(stored.evaluation.verdict, Verdict.UNSUPPORTED)
         self.assertEqual(
             stored.evaluation.safe_rewrite,
-            "现有材料不足以说明所有使用者都会遇到困难。",
+            f"当前材料不足以支持“{SIMPLE_CLAIM.rstrip(chr(0x3002))}”。",
         )
         request_review.assert_called_once()
         links = self.db.list_claim_evidence_links(stored.claim_id)

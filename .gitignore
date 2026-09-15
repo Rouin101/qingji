@@ -16,6 +16,7 @@ data/redacted/*
 data/*.db
 data/*.db-*
 data/*.jsonl
+data/submission/*
 !data/raw/.gitkeep
 !data/redacted/.gitkeep
 
@@ -32,4 +33,3 @@ tmp/
 .vscode/
 .DS_Store
 Thumbs.db
-

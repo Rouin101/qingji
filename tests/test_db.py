@@ -432,8 +432,9 @@ class DatabaseTestCase(unittest.TestCase):
         self.assertEqual(initial_stats["open_followup_tasks"], 1)
         for material in self.db.list_materials(first_project_id):
             self.assertEqual(material["consent_status"], "confirmed")
-            self.assertEqual(material["is_fictional"], 0)
-            self.assertEqual(material["notes"], "")
+            self.assertEqual(material["is_fictional"], 1)
+            self.assertIn("模拟演示数据", material["notes"])
+            self.assertTrue(material["original_filename"].startswith("模拟材料_"))
 
         first_material_id = add_demo_supplement(self.db, first_project_id)
         second_material_id = add_demo_supplement(self.db, first_project_id)

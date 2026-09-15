@@ -44,6 +44,7 @@ from .models import (
     MaterialImportResult,
     ReviewStatus,
     TaskStatus,
+    Verdict,
 )
 from .privacy import redact_text
 from .retrieval import evidence_candidate_from_mapping
@@ -873,7 +874,8 @@ def _store_evaluation(
         semantic_rewrite = _usable_semantic_rewrite(
             semantic_advice.safe_rewrite, claim_text
         )
-        if semantic_rewrite:
+        # A model rewrite must not restore a claim downgraded by local guards.
+        if semantic_rewrite and evaluation.verdict == Verdict.SUPPORTED:
             evaluation = replace(evaluation, safe_rewrite=semantic_rewrite)
     diagnostic = build_retrieval_diagnostic(
         claim_text,
@@ -918,7 +920,21 @@ def _store_evaluation(
             checked_at=_now_iso(),
         )
 
-    _replace_claim_links(db, claim_id, evaluation, effective_rationales)
+    # Keep displayed rationales consistent when a local guard vetoes the
+    # model's relation. The original advice remains in the model run history.
+    final_rationales = dict(effective_rationales or {})
+    for relation, evidence_ids in (
+        ("support", evaluation.supporting_evidence_ids),
+        ("contradict", evaluation.contradicting_evidence_ids),
+        ("context", evaluation.context_evidence_ids),
+    ):
+        for evidence_id in evidence_ids:
+            if (effective_overrides or {}).get(evidence_id, relation) != relation:
+                final_rationales[evidence_id] = (
+                    _LINK_RATIONALES[relation]
+                    + " 本地边界检查调整了模型建议，请核对数量、对象、时间和否定表达。"
+                )
+    _replace_claim_links(db, claim_id, evaluation, final_rationales)
     _sync_followup_tasks(
         db, claim_id, evaluation.missing_evidence
     )
@@ -1070,7 +1086,10 @@ def review_evidence_card(
         raise RuntimeError(f"证据 E{evidence_card_id} 保存失败。")
 
     rechecked_claim_ids: list[int] = []
-    if evidence_fields_changed and "approved" in {old_status, new_status}:
+    if evidence_fields_changed and (
+        is_retrievable_evidence(current)
+        or is_retrievable_evidence({**current, **updated})
+    ):
         project_id = int(updated["project_id"])
         for claim in db.list_claims(project_id):
             claim_id = int(claim["id"])
@@ -1441,8 +1460,8 @@ def review_evidence_cards(
     should_recheck = any(
         item["changed"]
         and (
-            item["old_status"] != ReviewStatus.REJECTED.value
-            or item["changes"]["review_status"] != ReviewStatus.REJECTED.value
+            is_retrievable_evidence(item["current"])
+            or is_retrievable_evidence({**item["current"], **item["updated"]})
         )
         for item in prepared
     )

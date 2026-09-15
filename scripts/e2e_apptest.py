@@ -41,6 +41,7 @@ from qingji.backup import (  # noqa: E402
 )
 from qingji.db import Database  # noqa: E402
 from qingji.export import export_project_markdown  # noqa: E402
+from qingji.demo import DEMO_PROJECT_NAME  # noqa: E402
 from qingji.llm import (  # noqa: E402
     EvidenceCardGenerationAdvice,
     EvidenceCardGenerationItem,
@@ -91,7 +92,7 @@ def _db() -> Database:
 def _approved_card_count() -> int:
     database = _db()
     project = database.get_project_by_name(
-        "数字便民服务体验调研"
+        DEMO_PROJECT_NAME
     )
     if project is None:
         return 0
@@ -105,7 +106,7 @@ def _approved_card_count() -> int:
 def _draft_card_ids() -> list[int]:
     database = _db()
     project = database.get_project_by_name(
-        "数字便民服务体验调研"
+        DEMO_PROJECT_NAME
     )
     assert project is not None
     drafts = database.list_evidence_cards(
@@ -147,7 +148,7 @@ def step_import_and_approve(app: AppTest) -> None:
     assert _approved_card_count() == 3 + len(card_ids), "全部新卡应完成人工批准"
     database = _db()
     project = database.get_project_by_name(
-        "数字便民服务体验调研"
+        DEMO_PROJECT_NAME
     )
     for card_id in card_ids:
         events = database.list_evidence_review_events(
@@ -170,7 +171,7 @@ def step_check_claim(app: AppTest) -> None:
 
     database = _db()
     project = database.get_project_by_name(
-        "数字便民服务体验调研"
+        DEMO_PROJECT_NAME
     )
     claims = database.list_claims(int(project["id"]))
     claim = next(
@@ -184,7 +185,7 @@ def step_check_claim(app: AppTest) -> None:
 
 def step_supplement_and_recheck(app: AppTest) -> None:
     database = _db()
-    project = database.get_project_by_name("数字便民服务体验调研")
+    project = database.get_project_by_name(DEMO_PROJECT_NAME)
     claim = next(
         item
         for item in database.list_claims(int(project["id"]))
@@ -206,7 +207,7 @@ def step_supplement_and_recheck(app: AppTest) -> None:
 
     database = _db()
     project = database.get_project_by_name(
-        "数字便民服务体验调研"
+        DEMO_PROJECT_NAME
     )
     claims = database.list_claims(int(project["id"]))
     claim = next(
@@ -228,7 +229,7 @@ def step_export(app: AppTest) -> None:
 
     database = _db()
     project = database.get_project_by_name(
-        "数字便民服务体验调研"
+        DEMO_PROJECT_NAME
     )
     markdown = export_project_markdown(database, int(project["id"]))
     assert GROUP_CLAIM in markdown
@@ -243,7 +244,7 @@ def step_export(app: AppTest) -> None:
 def step_backup_and_restore() -> None:
     database = _db()
     project = database.get_project_by_name(
-        "数字便民服务体验调研"
+        DEMO_PROJECT_NAME
     )
     source_id = int(project["id"])
     backup = export_project_backup(database, source_id)

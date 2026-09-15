@@ -5,11 +5,13 @@ from __future__ import annotations
 import streamlit as st
 
 from qingji.config import llm_settings
+from qingji.privacy import sanitize_error_message
 from qingji.ui import (
     configure_page,
     empty_state,
     format_datetime,
     get_demo_context,
+    render_demo_notice,
     render_page_intro,
     render_sidebar_note,
 )
@@ -42,7 +44,8 @@ except Exception as exc:
     st.stop()
 
 render_sidebar_note(project, database=db, project_id=project_id)
-render_page_intro("04 · MODEL OPERATIONS", "模型运行中心")
+render_page_intro("04 · MODEL OPERATIONS", "运行与恢复")
+render_demo_notice(project)
 st.caption("查看当前项目的模型任务、失败原因与安全重试。这里不会展示 API Key 或未脱敏原文。")
 
 runs = db.list_model_runs(project_id, limit=500)
@@ -197,7 +200,7 @@ for run in filtered_runs:
         }
         st.dataframe([summary], width="stretch", hide_index=True)
         if run.get("error_message"):
-            st.error(str(run["error_message"]))
+            st.error(sanitize_error_message(run["error_message"]))
         can_retry = status == "failed" and run_type in RETRYABLE_TYPES and material_id > 0
         if can_retry and st.button(
             "从该失败点重试",

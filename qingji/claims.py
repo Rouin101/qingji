@@ -7,7 +7,59 @@ import re
 from collections.abc import Mapping
 
 from .models import ClaimEvaluation, EvidenceCandidate, EvidenceType, Verdict
-from .retrieval import RetrievalMatch, rank_evidence_with_explanations
+from .retrieval import RetrievalMatch, normalize_semantics, rank_evidence_with_explanations
+
+CLAIM_RULE_VERSION = "conservative_boundaries_v2"
+_QUANTITY = re.compile(r"(?:\d+(?:\.\d+)?|[零〇一二两三四五六七八九十百千万]+)\s*(?:%|％|成|倍|人|份|次(?!说明|告知)|个|元|天|小时|分钟)")
+_NEGATION = re.compile(r"(?:并非|没有|禁止|取消|不|未)(?=不|在|开放|提供|增加|减少|延长|完成|参加|支持|允许|开展|通过|改善|解决|存在|需要|使用|收到|找到|帮助|提升|降低|保留|认可|同意|满意|成功)")
+_EXISTENTIAL = re.compile(r"(?:一名|一位|一个|有些|部分|个别|有)(?:模拟)?(?:受访者|居民|用户|学生|访客|参与者)")
+
+
+def _boundary_relation(claim: str, quote: str, relation: str) -> tuple[str, str]:
+    """Veto unsafe relations, including model advice, using the source quote.
+
+    Only identical propositions with a changed number/negation are treated as
+    direct contradictions. Ambiguous scope or alignment stays context.
+    """
+    query = normalize_semantics(claim)
+    source = normalize_semantics(quote)
+    if not source:
+        return "context", "补充能够回溯到原文的直接证据"
+    if relation == "support" and re.search(r"不能证明|尚未确认|未能证实|不确定|可能|据说|推测|计划|预计", quote):
+        return "context", "原文含有推测、计划或未确认表述，不能直接当作已发生的事实"
+    for pattern in (r"受访者([甲乙丙丁ABCD])", r"周[一二三四五六日天末]", r"\d{4}年(?:\d{1,2}月)?(?:\d{1,2}日)?"):
+        left, right = set(re.findall(pattern, claim)), set(re.findall(pattern, quote))
+        if left and right and left.isdisjoint(right):
+            return "context", "核对材料与结论的对象、时间是否一致"
+    if _EXISTENTIAL.search(claim) and relation == "contradict":
+        return "context", "不同参与者的体验可以并存，不能据此否定个例的存在"
+
+    quantities = set(_QUANTITY.findall(claim))
+    # A single person in an existential statement is a scope marker, not an
+    # aggregate statistic. Other quantities still require literal alignment.
+    if _EXISTENTIAL.search(claim):
+        quantities.discard("一个")
+    quantities = {re.sub(r"\s", "", value).replace("％", "%") for value in quantities}
+    source_quantities = {re.sub(r"\s", "", value).replace("％", "%") for value in _QUANTITY.findall(quote)}
+    if quantities:
+        if not quantities.issubset(source_quantities):
+            same_statement = _QUANTITY.sub("#", query) == _QUANTITY.sub("#", source)
+            return ("contradict" if same_statement else "context"), "核对原文中的具体数量、单位与统计口径"
+        if query not in source:
+            return "context", "数量相同不等于统计对象相同，请核对数量对应的完整表述"
+
+    query_negations = _NEGATION.findall(query)
+    source_negations = _NEGATION.findall(source)
+    if max(len(query_negations), len(source_negations)) > 1:
+        return "context", "原文或结论含有多重否定，需要人工核对语义"
+    query_negative = bool(query_negations)
+    source_negative = bool(source_negations)
+    if query_negative != source_negative:
+        if _NEGATION.sub("", query) == _NEGATION.sub("", source):
+            return "contradict", "原文与结论的肯定、否定方向相反"
+        if relation == "support":
+            return "context", "原文含有不同的否定表达，需要核对完整语义"
+    return relation, ""
 
 
 _GROUP_TERMS = ("普遍", "大多数", "多数", "广泛", "整体上", "居民都", "大家都")
@@ -62,7 +114,7 @@ def detect_rule_flags(claim_text: str) -> list[str]:
         flags.append("strong_intensity")
     if any(term in claim_text for term in _CAUSAL_TERMS):
         flags.append("causal_language")
-    if re.search(r"\d+(?:\.\d+)?\s*(?:%|％|成|倍|人|份)", claim_text):
+    if _QUANTITY.search(_EXISTENTIAL.sub("参与者", claim_text)):
         flags.append("precise_quantity")
     return flags
 
@@ -107,21 +159,6 @@ def _relation(
     return "context"
 
 
-def _remove_group_scope(claim_text: str) -> str:
-    rewritten = claim_text.strip().rstrip("。；;")
-    patterns = (
-        r"^(?:当地|本地|受访的)?居民(?:们)?(?:普遍|大多数|多数|广泛|整体上)?认为[，,:：]?",
-        r"^(?:所有|全部|大多数|多数)受访者(?:均|都)?(?:认为|表示)[，,:：]?",
-        r"^大家都(?:认为|表示)?[，,:：]?",
-    )
-    for pattern in patterns:
-        changed = re.sub(pattern, "", rewritten)
-        if changed != rewritten:
-            rewritten = changed
-            break
-    return rewritten or claim_text.strip().rstrip("。")
-
-
 def _safe_rewrite(
     claim_text: str,
     verdict: Verdict,
@@ -135,24 +172,18 @@ def _safe_rewrite(
     flags = detect_rule_flags(claim_text)
     rewritten = claim_text.strip().rstrip("。")
     if "group_generalization" in flags or "absolute_quantifier" in flags:
-        core = _remove_group_scope(claim_text)
         count = len({candidate.material_id for candidate in supporting})
-        if count <= 1:
-            rewritten = f"一份已审核材料提到，{core}"
-        else:
-            rewritten = f"现有{count}份独立材料提到，{core}"
-    if "causal_language" in flags:
-        rewritten = re.sub(r"导致|造成|引发|使得|因此造成|必然引起", "与", rewritten)
-        rewritten += "相关，但现有材料不能单独确认因果关系"
-    if "strong_intensity" in flags:
-        rewritten = re.sub(r"显著|极大|严重|完全|大幅|明显", "", rewritten)
-        rewritten += "；影响程度仍需进一步量化"
-    if rewritten == claim_text.strip().rstrip("。"):
         return (
-            f"现有已审核材料中出现与“{rewritten}”一致的表述，"
-            "其适用范围仍限于已收集材料。"
+            f"当前有{count}份可引用材料涉及该现象，但材料份数不代表独立样本数，"
+            "尚不能据此作群体性或绝对化结论。"
         )
-    return rewritten.rstrip("。；") + "。"
+    if "precise_quantity" in flags or "causal_language" in flags or "strong_intensity" in flags:
+        if verdict != Verdict.SUPPORTED:
+            return "现有材料涉及相关现象，但尚不足以确认该表述中的数量、影响程度或因果关系。"
+    return (
+        f"现有可引用材料中出现与“{rewritten}”一致的表述，"
+        "其适用范围仍限于已收集材料。"
+    )
 
 
 def _strong_claim_is_proven(
@@ -161,22 +192,14 @@ def _strong_claim_is_proven(
 ) -> bool:
     if not flags:
         return True
-    independent_sources = {candidate.material_id for candidate in supporting}
     formal = [
         candidate
         for candidate in supporting
         if candidate.evidence_type == EvidenceType.FORMAL_RECORD
     ]
-    if "absolute_quantifier" in flags:
-        return False
-    if "group_generalization" in flags and len(independent_sources) < 3:
-        return False
-    if "causal_language" in flags and not formal:
-        return False
-    if "strong_intensity" in flags and not any(
-        re.search(r"\d+(?:\.\d+)?\s*(?:%|％|倍|人|份)", item.quote)
-        for item in formal
-    ):
+    # Neither file counts nor a source-type label establish representativeness,
+    # a causal design, or a quantitative effect. Keep these claims qualified.
+    if set(flags) & {"absolute_quantifier", "group_generalization", "causal_language", "strong_intensity"}:
         return False
     if "precise_quantity" in flags and not formal:
         return False
@@ -211,12 +234,19 @@ def evaluate_claim(
     supporting: list[EvidenceCandidate] = []
     contradicting: list[EvidenceCandidate] = []
     context: list[EvidenceCandidate] = []
+    boundary_notes: list[str] = []
 
     for match in relevant:
         candidate = match.candidate
         relation = (relation_overrides or {}).get(int(candidate.id))
         if relation not in {"support", "contradict", "context"}:
             relation = _relation(claim_stance, match)
+        if candidate.evidence_type == EvidenceType.TEAM_ANALYSIS:
+            relation = "context"
+        else:
+            relation, note = _boundary_relation(claim_text, candidate.quote, relation)
+            if note:
+                boundary_notes.append(note)
         # Strong scope/causal/quantity claims need evidence tied to the main
         # topic, not several weaker cards that only share generic vocabulary.
         if (
@@ -232,7 +262,7 @@ def evaluate_claim(
         else:
             context.append(candidate)
 
-    missing: list[str] = []
+    missing: list[str] = list(dict.fromkeys(boundary_notes))
     if "group_generalization" in flags or "absolute_quantifier" in flags:
         missing.extend(
             (
@@ -254,13 +284,13 @@ def evaluate_claim(
             )
         else:
             reason = (
-                f"当前找到{len(contradicting)}项与该表述方向相反的已审核材料。"
+                f"当前找到{len(contradicting)}项与该表述方向相反的可引用材料。"
             )
         missing.append("核对相反材料的对象、时间和场景差异")
     elif supporting:
         if _strong_claim_is_proven(flags, supporting):
             verdict = Verdict.SUPPORTED
-            reason = f"当前有{len(supporting)}项已审核、已授权材料直接支持该表述。"
+            reason = f"当前有{len(supporting)}项已授权、可引用材料支持该表述；待复核卡仍需人工确认。"
         else:
             verdict = Verdict.PARTIALLY_SUPPORTED
             reason = (
@@ -269,7 +299,7 @@ def evaluate_claim(
             )
     else:
         verdict = Verdict.UNSUPPORTED
-        reason = "当前候选材料中未找到能够直接支持该表述的已审核证据。"
+        reason = "当前候选材料中未找到能够直接支持该表述的可引用证据。"
         missing.append("补充直接记录该现象的访谈、观察或正式资料")
 
     # Citation validation is deliberately final and explicit: even if future

@@ -85,10 +85,10 @@ class LLMTests(unittest.TestCase):
                 },
                 {
                     "id": 2,
-                    "title": "未批准证据",
+                    "title": "已排除证据",
                     "quote": "不应进入模型上下文",
-                    "summary": "draft",
-                    "review_status": "draft",
+                    "summary": "rejected",
+                    "review_status": "rejected",
                     "consent_status": "confirmed",
                 },
             ],
@@ -186,10 +186,10 @@ class LLMTests(unittest.TestCase):
                 },
                 {
                     "id": 2,
-                    "title": "未批准证据",
+                    "title": "已排除证据",
                     "quote": "不应进入模型上下文",
-                    "summary": "draft",
-                    "review_status": "draft",
+                    "summary": "rejected",
+                    "review_status": "rejected",
                     "consent_status": "confirmed",
                 },
                 {
