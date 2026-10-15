@@ -1,0 +1,86 @@
+/* Fieldwork entrances and project sections. Existing reader styles stay in styles.css. */
+[hidden] {display:none!important;}
+.fieldwork-art {object-fit:contain;pointer-events:none;user-select:none;}
+.home-entry-grid,.project-entry-grid {display:grid;grid-template-columns:1fr 1fr;gap:22px;}
+.entry-kicker {display:block;font-size:12px;letter-spacing:1px;color:var(--muted);margin:0 0 26px;}
+.start-practice-card,.home-report-entry,.project-entry-card {position:relative;border:1px solid var(--line);border-radius:16px;text-align:left;min-width:0;overflow:hidden;}
+.start-practice-card {padding:30px;background:var(--purple-pale);}
+.start-practice-card h2 {font-size:24px;margin:0 0 12px;position:relative;max-width:70%;line-height:1.5;}
+.start-practice-card>p:not(.entry-kicker) {font-size:16px;line-height:1.8;max-width:70%;color:var(--muted);margin:0 0 26px;}
+.start-practice-card .fieldwork-art,.home-report-entry .fieldwork-art {position:absolute;right:10px;top:26px;width:150px;height:150px;opacity:.8;}
+.home-start-practice {margin:0;}
+.home-report-entry {background:white;align-self:start;}
+.home-report-entry>summary {list-style:none;padding:30px;cursor:pointer;min-height:274px;}
+.home-report-entry>summary::-webkit-details-marker {display:none;}
+.home-report-entry summary strong {display:block;font-size:24px;line-height:1.5;margin:0 0 12px;max-width:70%;}
+.entry-description {display:block;font-size:16px;line-height:1.8;max-width:70%;color:var(--muted);margin-bottom:26px;}
+.entry-link {display:flex;align-items:center;gap:8px;font-size:14px;color:var(--purple);line-height:1.7;}
+.home-report-entry summary .entry-link {min-height:44px;font-weight:600;}
+.home-report-entry[open] {border-color:var(--purple-soft);}
+.home-report-entry[open]>summary {border-bottom:1px solid var(--line);}
+.home-report-entry .upload-area {padding:22px 26px;}
+.intro>.example-link {margin:18px 0 0;font-size:14px;font-weight:400;}
+.project-sections {display:flex;gap:28px;border-bottom:1px solid var(--line);margin:22px 0 26px;}
+.project-sections button {border:0;border-bottom:2px solid transparent;background:transparent;color:var(--muted);padding:13px 0;font-size:15px;}
+.project-sections button[aria-current] {border-color:var(--purple);color:var(--purple);font-weight:600;}
+.orientation-heading {display:flex;align-items:baseline;gap:18px;margin:0 0 20px;}
+.orientation-heading .entry-kicker {white-space:nowrap;margin:0;color:var(--purple);}
+.orientation-heading p {margin:0;font-size:16px;line-height:1.8;overflow-wrap:anywhere;}
+.project-entry-card {background:var(--purple-pale);padding:25px;display:flex;flex-direction:column;align-items:flex-start;}
+.project-entry-card.notes-entry {background:#fff;}
+.project-entry-card .fieldwork-art {position:absolute;right:8px;top:17px;width:132px;height:132px;opacity:.78;}
+.project-entry-card .entry-kicker {margin-bottom:22px;}
+.project-entry-card strong {font-size:22px;line-height:1.5;max-width:72%;margin:0 0 8px;}
+.project-entry-card>span:not(.entry-kicker):not(.entry-link) {font-size:14px;color:var(--muted);line-height:1.8;max-width:70%;}
+.project-entry-card .entry-link {margin-top:22px;}
+.project-entry-card:hover {border-color:var(--purple-soft);}
+.materials-bridge {width:100%;margin:15px 0 24px;padding:12px 2px;border-bottom:1px solid var(--line);font-size:15px;}
+.materials-bridge>span {font-size:13px;margin-left:auto;}
+.practice-optional {border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:14px 0;font-size:14px;}
+.practice-optional summary span {font-size:12px;color:var(--muted);margin-left:10px;}
+.practice-optional .practice-form-grid {margin-top:20px;}
+.practice-draft-status {font-size:13px;color:#785422;background:#fffaf1;padding:9px 12px;margin:12px 0;}
+.material-empty .fieldwork-art {width:110px;height:110px;}
+@media(max-width:1100px) {
+  .start-practice-card .fieldwork-art,.home-report-entry .fieldwork-art {width:114px;height:114px;right:0;top:26px;}
+  .start-practice-card,.home-report-entry>summary {padding:24px;}
+  .start-practice-card h2,.home-report-entry summary strong {font-size:21px;}
+  .project-entry-card .fieldwork-art {width:100px;height:100px;right:0;}
+  .project-entry-card strong {font-size:20px;}
+}
+@media(max-width:760px) {
+  .home-entry-grid,.project-entry-grid {grid-template-columns:1fr;gap:16px;}
+  .start-practice-card .fieldwork-art,.home-report-entry .fieldwork-art {width:130px;height:130px;right:8px;top:22px;}
+  .home-report-entry>summary {min-height:0;}
+  .entry-kicker {margin-bottom:20px;}
+  .start-practice-card h2,.home-report-entry summary strong {max-width:68%;font-size:22px;}
+  .entry-description,.start-practice-card>p:not(.entry-kicker) {max-width:68%;}
+  .home-report-entry .upload-area {padding:18px;}
+  .project-sections {gap:22px;margin:16px 0 22px;}
+  .project-sections button {font-size:14px;}
+  .orientation-heading {display:block;}
+  .orientation-heading .entry-kicker {margin-bottom:8px;}
+  .project-entry-card {padding:22px;}
+  .project-entry-card .fieldwork-art {width:122px;height:122px;}
+}
+@media(max-width:360px) {
+  .start-practice-card .fieldwork-art,.home-report-entry .fieldwork-art {width:90px;height:90px;top:45px;right:0;}
+  .start-practice-card,.home-report-entry>summary {padding:20px;}
+  .start-practice-card h2,.home-report-entry summary strong {font-size:20px;}
+  .project-sections {gap:16px;}
+  .project-sections button {font-size:13px;}
+  .project-entry-card .fieldwork-art {width:94px;height:94px;}
+}
+@media(prefers-reduced-motion:reduce) {*,*::before,*::after {scroll-behavior:auto!important;transition:none!important;animation:none!important;}}
+.review-start {max-width:1100px;margin:auto;padding:32px;}
+.review-start-heading {display:flex;align-items:center;justify-content:space-between;gap:24px;margin-bottom:24px;}
+.review-start-heading .fieldwork-art {width:130px;height:130px;}
+.review-start-heading p,.processing-note,.review-source-choice p {color:var(--muted);line-height:1.8;}
+.review-start-card {padding:28px;background:white;border:1px solid var(--line);border-radius:16px;}
+.review-source-choice {border-top:1px solid var(--line);margin-top:24px;padding-top:20px;}
+.review-source-choice label {display:block;margin:14px 0 10px;}
+.review-source-choice select,.review-source-choice textarea {width:100%;max-width:100%;padding:12px;border:1px solid var(--line);border-radius:8px;font:inherit;background:white;}
+.review-source-choice button {margin-top:12px;}
+.processing-note {font-size:14px;margin-top:20px;}
+@media(max-width:600px){.review-start{padding:20px;}.review-start-heading .fieldwork-art{width:80px;height:80px;}.review-start-card{padding:20px;}}
+.material-intro-art {display:flex;align-items:center;justify-content:space-between;min-height:100px;gap:16px;}.material-intro-art .fieldwork-art {width:105px;height:105px;}.material-intro-art .material-intro {margin:0;}

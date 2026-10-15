@@ -230,7 +230,7 @@ export function ExportMenu({
                 </div>
                 {importedUnverified && (
                   <p className="export-detail-tip export-warning">
-                    交接文件中的判断仍保留，需要在本机确认材料授权并复查。
+                    交接文件中的判断仍保留，需要在本机检查纳入材料并复查。
                   </p>
                 )}
                 {review?.mode === "preliminary" && !importedUnverified && (
@@ -247,7 +247,7 @@ export function ExportMenu({
                 <div className="export-detail-row">
                   <strong>材料范围：</strong>
                   <span>
-                    已保存 {materials?.total ?? 0} 份 · 准备纳入已授权 {materials?.eligible_current ?? 0} 份 · 上次核对实际纳入{" "}
+                    已保存 {materials?.total ?? 0} 份 · 准备纳入 {materials?.eligible_current ?? 0} 份 · 上次核对实际纳入{" "}
                     {review?.last_used_material_count === null
                       ? "未知（旧记录未保存纳入范围）"
                       : `${review?.last_used_material_count ?? 0}份`}
@@ -255,12 +255,12 @@ export function ExportMenu({
                 </div>
                 {materials?.unconfirmed_included > 0 && (
                   <p className="export-detail-tip">
-                    准备纳入但未授权：{materials.unconfirmed_included} 份
+                    旧记录待更新处理范围：{materials.unconfirmed_included} 份
                   </p>
                 )}
                 {materials?.excluded > 0 && (
                   <p className="export-detail-tip">
-                    明确排除：{materials.excluded} 份（明确排除的材料不要求补授权）
+                    明确排除：{materials.excluded} 份（不发送至 AI）
                   </p>
                 )}
 

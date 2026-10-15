@@ -217,8 +217,9 @@ def model_messages(report: Document, materials: list[Document]) -> list[dict]:
 support_status可选supported、partial、unsupported、disagreement、pending；这是模型的支持关系建议，非事实认证。
 引用relation可选support、different、context、unclassified。不同情况使用different，不隐去与结论不一致的记录。
 support应直接支持对应原句在其完整范围内的事实；只说明样本身份、采集场景或证据覆盖限制的引文用context，不把存在引文等同于支持结论。
+category 必须从“范围外推”“成效依据”“数字口径”“来源表述”“其他”中选择一个，因果等未列出的分类使用“其他”。
 只返回 JSON：{"issues":[{"passage_id":"s1","quote":"原句原样",
-"category":"范围外推|成效依据|数字口径|来源表述|其他","reason":"简短具体原因",
+"category":"其他","reason":"简短具体原因",
 "next_step":"具体修改或补充行动","suggested_text":null,
 "support_status":"partial",
 "citations":[{"document_id":"report或材料标识","quote":"实际依据原文","start":0,"relation":"support"}]}],
@@ -256,6 +257,7 @@ def validate_model_result(raw: str, report: Document, materials: list[Document])
     by_passage = {p.id: p for p in passages(report.text)}
     docs = {d.id: d for d in [report, *materials]}
     issues = []
+    category_notices = []
     seen = set()
     for item in payload["issues"]:
         if not isinstance(item, dict):
@@ -267,8 +269,12 @@ def validate_model_result(raw: str, report: Document, materials: list[Document])
         if passage is None or item.get("quote") not in (passage.text, redacted(passage.text)):
             raise ReviewError("某条提醒无法对应报告原句，已停止采用本次结果。")
         category = item.get("category")
-        if not isinstance(category, str) or category not in CATEGORIES:
-            raise ReviewError("模型返回了不支持的问题类别。")
+        if not isinstance(category, str) or not category.strip() or len(category)>80:
+            raise ReviewError("模型返回的问题类别结构不完整。")
+        category=category.strip()
+        if category not in CATEGORIES:
+            category_notices.append("一项模型问题分类已归入其他；原句、依据和支持关系仍按完整规则核对。")
+            category="其他"
         identity = (passage.id, category)
         if identity in seen:
             raise ReviewError("模型返回了重复提醒，请重新检查。")
@@ -311,7 +317,7 @@ def validate_model_result(raw: str, report: Document, materials: list[Document])
     return ReviewResult("ai", report, issues, [
         "引用文字已与提交材料核对；支持关系和修改建议仍需人工复核。",
         "本次检查不证明记录本身真实，也不验证外部专业事实。",
-        *report.notes, *(note for d in materials for note in d.notes), *notices,
+        *report.notes, *(note for d in materials for note in d.notes), *dict.fromkeys(category_notices), *notices,
     ])
 
 

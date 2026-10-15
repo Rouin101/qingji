@@ -14,7 +14,7 @@ const materialFields = {
   name: "名称",
   text: "文字",
   source: "来源与场景",
-  consent_status: "授权",
+  consent_status: "AI 处理范围",
   enabled: "纳入设置",
   tags: "标签",
   notes: "读取说明"

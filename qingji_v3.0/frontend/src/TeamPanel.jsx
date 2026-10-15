@@ -208,7 +208,7 @@ export function TaskCard({task, project, labels, onTask, onLocate, onTaskDetail,
                         {item.isRemoved && <span className="feedback-chip warning">材料已移除（快照）</span>}
                         {!item.isRemoved && item.isModified && <span className="feedback-chip notice">材料已变化（快照）</span>}
                         {item.isExcluded && <span className="feedback-chip">已排除</span>}
-                        {item.isConsentRevoked && <span className="feedback-chip">待确认授权</span>}
+                        {item.isConsentRevoked && <span className="feedback-chip">待更新处理范围</span>}
                         <span className={`feedback-chip ${item.usedStatus === "included" ? "included" : "excluded"}`}>
                           {item.usedStatus === "included" ? "已纳入上次核对" : item.usedStatus === "not_included" ? "未纳入核对" : "纳入范围未知"}
                         </span>
@@ -259,7 +259,7 @@ export function TaskCard({task, project, labels, onTask, onLocate, onTaskDetail,
       {!practice && <button className="text-button" onClick={() => onLocate(task)}>查看对应结论</button>}
       {task.status === "done" ? <button className="text-button" onClick={() => onTask(task, "open")} disabled={busy}>重新打开</button> : <button className="secondary" onClick={() => onTask(task, "done")} disabled={busy || !canConfirm}>{practice ? "确认任务完成" : "确认补证完成"}</button>}
     </div>
-    {!practice && !canConfirm && <p className="task-completion-note">{needsRecheck ? "正文或材料有变化，复查后再确认。" : !task.last_review_at ? "补充材料并复查后再确认。" : "关联材料需确认授权并纳入核对。"}</p>}
+    {!practice && !canConfirm && <p className="task-completion-note">{needsRecheck ? "正文或材料有变化，复查后再确认。" : !task.last_review_at ? "补充材料并复查后再确认。" : "关联材料需纳入核对。"}</p>}
     {!practice && missingMaterials.length > 0 && <p className="task-link-note">有旧关联已移除，可选择当前材料后保存并复查。</p>}
     {(onTaskDetail || onComment) && <details className="task-details">
       <summary>分工与讨论{comments.length > 0 && <span>{comments.length}</span>}</summary>
@@ -280,7 +280,7 @@ export function TaskCard({task, project, labels, onTask, onLocate, onTaskDetail,
                 setRelationsChanged(true);
                 setSelectedMaterials(selected => event.target.checked ? [...selected, material.id] : selected.filter(id => id !== material.id));
               }}/>
-              <span>{material.name}<small>{material.consent_status !== "confirmed" ? "待确认授权" : material.enabled === false ? "已排除" : "本轮纳入"}</small></span>
+              <span>{material.name}<small>{material.consent_status !== "confirmed" ? "待更新处理范围" : material.enabled === false ? "已排除" : "本轮纳入"}</small></span>
             </label>) : <p className="compact-note">当前还没有材料，可先到实践材料补充。</p>}</div>
             {missingMaterials.length > 0 && <label className="replace-material-links"><input type="checkbox" name="replace_material_links" checked={replaceMissing} onChange={event => setReplaceMissing(event.target.checked)} disabled={busy || saving}/>用当前选择更新材料关联</label>}
             <p className="compact-note">更新关联后，请复查再确认补证完成。</p>

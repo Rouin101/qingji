@@ -20,6 +20,16 @@ class ReviewTests(unittest.TestCase):
                              "citations": [{"document_id": "m1", "quote": self.material.text}]}],
                 "notices": []}
 
+    def test_unknown_category_keeps_validated_feedback(self):
+        payload = self.response()
+        payload["issues"][0]["category"] = "因果推断"
+        result = validate_model_result(json.dumps(payload), self.report, [self.material])
+        self.assertEqual(result.issues[0].category, "其他")
+        self.assertTrue(any("分类已归入其他" in n for n in result.notices))
+        payload["issues"][0]["citations"][0]["quote"] = "虚构的引文"
+        with self.assertRaises(ReviewError):
+            validate_model_result(json.dumps(payload), self.report, [self.material])
+
     def test_original_offsets_with_duplicate_sentences_and_emoji(self):
         text = "🙂记录。\n  同一句话。\n同一句话。"
         found = passages(text)
