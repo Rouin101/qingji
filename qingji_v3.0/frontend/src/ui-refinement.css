@@ -41,7 +41,7 @@
 .project-heading>div {min-width:0;}
 .project-heading .eyebrow {margin:4px 0 12px;}
 .project-heading h1 {font-size:28px;margin-bottom:10px;line-height:1.45;}
-.project-description {margin:0;color:var(--muted);font-size:14px;line-height:1.85;white-space:pre-wrap;overflow-wrap:anywhere;}
+.project-description {margin:0;color:var(--muted);font-size:16px;line-height:1.85;white-space:pre-wrap;overflow-wrap:anywhere;}
 .import-notice {padding:10px 13px;border-left:3px solid var(--purple-soft);background:var(--purple-pale);color:var(--purple-dark);font-size:12px;line-height:1.8;margin:0 0 17px;}
 .project-more {position:relative;flex-shrink:0;margin-top:30px;z-index:6;}
 .project-more summary {list-style:none;display:flex;align-items:center;gap:5px;border:1px solid var(--line);background:white;border-radius:7px;padding:8px 12px;font-size:12px;color:var(--muted);cursor:pointer;}
@@ -204,7 +204,7 @@
 .material-remove-confirm>div {display:flex;align-items:center;gap:15px;}
 .material-remove-confirm .secondary {font-size:12px;min-height:36px;padding:7px 13px;}
 .material-remove-confirm .text-button {font-size:12px;}
-.refined-material-card .material-excerpt {font-size:14px;line-height:1.85;margin:17px 0 14px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+.refined-material-card .material-excerpt {font-size:16px;line-height:1.85;margin:17px 0 14px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
 .material-source-details>summary {display:flex;align-items:center;gap:5px;list-style:none;cursor:pointer;width:max-content;max-width:100%;font-size:12px;color:var(--purple-dark);}
 .material-source-details>summary {min-height:30px;}
 .task-details>summary,.activity-log>summary,.member-add>summary {min-height:28px;}
@@ -257,7 +257,7 @@
   .project-heading {display:block;position:relative;}
   .project-heading .eyebrow {padding-right:85px;min-height:25px;}
   .project-heading h1,.refined-material-content>.section-title h1 {font-size:24px;}
-  .project-description {font-size:13px;}
+  .project-description {font-size:16px;}
   .project-heading>.project-more {position:absolute;right:0;top:0;margin-top:0;}
   .compact-stats>div {flex-direction:column;align-items:flex-start;gap:7px;padding:13px;}
   .compact-stats small {font-size:11px;}

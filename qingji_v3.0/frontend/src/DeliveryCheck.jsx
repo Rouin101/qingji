@@ -25,7 +25,7 @@ export function DeliveryCheck({version,hasEdits,busy,onCheck,onNavigate}) {
       {stale&&<p className="delivery-stale">项目内容已变化，下面是上次整理的状态。</p>}
       {data&&<>
         <div className="delivery-scope"><strong>{data.check.review.label}</strong><span>{data.check.review.current?"对应当前保存内容":"尚未核对或需复查"}</span></div>
-        <p className="delivery-material-scope">已保存{data.check.materials.total}份材料 · 当前已授权准备纳入{data.check.materials.eligible_current}份
+        <p className="delivery-material-scope">已保存{data.check.materials.total}份材料 · 当前准备纳入{data.check.materials.eligible_current}份
           {data.check.review.last_used_material_count===null?" · 上次纳入范围未记录":` · 上次核对纳入${data.check.review.last_used_material_count}份`}</p>
         <p className="compact-note">{data.check.notice}</p>
         {!data.check.review.current&&<p className="delivery-stale">以下判断和作者选择属于已保存记录，需复查后再用于当前正文。</p>}

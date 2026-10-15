@@ -1,3 +1,5 @@
+import {ReviewStart} from "./ReviewStart.jsx";
+import {FieldworkArt} from "./FieldworkArt.jsx";
 import {useEffect, useMemo, useRef, useState} from "react";
 import {IconArrowLeft, IconArrowUpRight, IconCheck, IconChevronDown, IconChevronUp,
   IconFileText, IconFileUpload, IconHelpCircle, IconLoader2, IconMessageCircle,
@@ -43,6 +45,9 @@ async function readFile(file) {
 }
 
 export function App() {
+  const [reportRequest,setReportRequest] = useState(null);
+  const [practiceDraft, setPracticeDraft] = useState(false);
+  const mayLeavePractice = () => !practiceDraft || window.confirm("还有未保存的实践输入。离开将丢失这些输入，确定离开？");
   const [screen, setScreen] = useState("home");
   const [project, setProject] = useState(null);
   const [projects, setProjects] = useState([]);
@@ -72,7 +77,7 @@ export function App() {
   const [materials, setMaterials] = useState([]);
   const [paste, setPaste] = useState("");
   const [showPaste, setShowPaste] = useState(false);
-  const [allowAI, setAllowAI] = useState(false);
+  const allowAI = true;
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
   const [reviewing, setReviewing] = useState(false);
@@ -285,14 +290,14 @@ export function App() {
   }
 
   function acceptProject(p, destination="project", options={}) {
-    keepProject(p);setReport(p.report);setMaterials(p.materials);setResult(p.result);
+    keepProject(p);setReport(p.report);setMaterials(p.materials.map(m=>({...m,consent_status:"confirmed"})));setResult(p.result);
     setChoices(p.choices);setManualText(p.manual_text);setReadingSize(p.reading_size);
     setActiveId(p.result?.issues[0]?.id??null);setEditing(false);setDraft("");
     setTaskCandidates([]);
     if(!options.preserveTab){setTab("feedback");setChat([]);}
     setRevision(null);
     revisionRequest.current += 1; setRevisionLoading(false);
-    setShowPaste(false);setPaste("");setError("");setScreen(destination==="review"&&!p.result?"project":destination);
+    setShowPaste(false);setPaste("");setError("");setScreen(destination==="review"&&!p.result?"review-start":destination);
     setPracticePlan(null);
     let cached=null;
     try{const saved=JSON.parse(sessionStorage.getItem(`qingji-v3.editor.${p.id}`)||"null");
@@ -340,7 +345,7 @@ export function App() {
       const remote=await request(`/api/project?id=${encodeURIComponent(state.base.id)}`);
       const merged=reconcileProjectChanges(state.base,state.requested,remote,preferLocal);
       const p=Object.keys(merged.changes).length?await request("/api/projects",{action:"save",id:remote.id,version:remote.version,actor:actorName,changes:merged.changes}):remote;
-      conflictRef.current=null;setConflict(null);acceptProject(p,screen);setError("");setAllowAI(false);
+      conflictRef.current=null;setConflict(null);acceptProject(p,screen);setError("");
       setToast(preferLocal?"已保留本页的重叠改动，其他更新已合并":"已使用最新的重叠改动，其他更新已合并");
     }finally{setBusy(false);}
   }
@@ -351,37 +356,41 @@ export function App() {
   }
 
   async function goHome() {
+    if(!mayLeavePractice())return;
     if(busy||operationRef.current)return;
     try {await flushEdits(); const data=await request("/api/projects");setProjects(data.projects);
-      keepProject(null);setResult(null);setReport(null);setMaterials([]);setChoices({});setManualText(null);setShowPaste(false);setPaste("");setAllowAI(false);setScreen("home");setError("");}
+      keepProject(null);setResult(null);setReport(null);setMaterials([]);setChoices({});setManualText(null);setShowPaste(false);setPaste("");setScreen("home");setError("");}
     catch(e){setError(e.message);}
   }
 
   async function navigate(destination) {
+    if(destination!==screen&&!mayLeavePractice())return;
     if(busy||operationRef.current)return;
     if (!projectRef.current) return goHome();
-    try {await flushEdits();if(destination==="review"&&!result){setScreen("project");setToast(report?.text?.trim()?"报告已准备好，在这里选择核对方式并开始":"先上传报告或保存一句结论，再开始核对");}else setScreen(destination);}
+    try {await flushEdits();if(destination==="review"&&!result){setScreen("review-start");}else setScreen(destination);}
     catch(e){setError(e.message);}
   }
 
   async function openProject(id) {
+    if(!mayLeavePractice())return;
     if(busy||operationRef.current)return;
     setBusy(true);
-    try {await flushEdits();acceptProject(await request(`/api/project?id=${encodeURIComponent(id)}`));setAllowAI(false);}
+    try {await flushEdits();acceptProject(await request(`/api/project?id=${encodeURIComponent(id)}`));}
     catch(e){setError(e.message);}finally{setBusy(false);}
   }
 
   async function newProject() {
+    if(!mayLeavePractice())return;
     if(busy||operationRef.current)return;
     setBusy(true);
-    try {await flushEdits();acceptProject(await request("/api/projects",{action:"create",name:"新的社会实践项目"}));setAllowAI(false);}
+    try {await flushEdits();acceptProject(await request("/api/projects",{action:"create",name:"新的社会实践项目"}));}
     catch(e){setError(e.message);}finally{setBusy(false);}
   }
 
   async function saveDetails(changes) {
     setBusy(true);
-    try {const edits="report" in changes?{...changes,choices:{},manual_text:null}:changes;const p=await persist(edits);if("report" in changes)acceptProject(p,screen);else setMaterials(p.materials);setToast("项目已保存到本机");}
-    catch(e){setError(e.message);}finally{setBusy(false);}
+    try {const edits="report" in changes?{...changes,choices:{},manual_text:null}:changes;const p=await persist(edits);if("report" in changes)acceptProject(p,screen);else setMaterials(p.materials.map(m=>({...m,consent_status:"confirmed"})));setToast("项目已保存到本机");return true;}
+    catch(e){setError(e.message);return false;}finally{setBusy(false);}
   }
 
   async function taskAction(task,status) {
@@ -410,17 +419,17 @@ export function App() {
     if(!recordToEdit&&materials.length>=8)throw new Error("项目目前最多保存八份材料，可先整理现有记录。");
     setBusy(true);setError("");
     try {const next=recordToEdit?materials.map(m=>m.id===material.id?material:m):[...materials,material];
-      const p=await persist({materials:next});setMaterials(p.materials);setFocusMaterial(material.id);setScreen("materials");setRecordToEdit(null);setToast("记录已保存，确认授权后可参与核对");}
+      const p=await persist({materials:next});setMaterials(p.materials.map(m=>({...m,consent_status:"confirmed"})));setFocusMaterial(material.id);setScreen("materials");setRecordToEdit(null);setToast("记录已保存，已纳入的内容可参与 AI 核对");}
     catch(e){setError(e.message);throw e;}
     finally {setBusy(false);}
   }
 
-  function openQuickRecord(material=null){setRecordToEdit(material);setQuickRecordOpen(true);}
+  function openQuickRecord(material=null){if(!mayLeavePractice())return;setRecordToEdit(material);setQuickRecordOpen(true);}
 
   async function removeMaterial(material){
     if(mutationOperation.current||busy)throw new Error("上一项操作正在保存，请稍后继续。");
     mutationOperation.current=true;setBusy(true);setError("");
-    try{await flushEdits();const p=await persist({materials:materials.filter(m=>m.id!==material.id)});setMaterials(p.materials);setToast("已从当前材料移除，核对历史仍保留");}
+    try{await flushEdits();const p=await persist({materials:materials.filter(m=>m.id!==material.id)});setMaterials(p.materials.map(m=>({...m,consent_status:"confirmed"})));setToast("已从当前材料移除，核对历史仍保留");}
     catch(e){setError(e.message);throw e;}
     finally{mutationOperation.current=false;setBusy(false);}
   }
@@ -451,7 +460,7 @@ export function App() {
       if(file.size>12*1024*1024)throw new Error("项目包请控制在12MB以内。");
       let data;try {data=JSON.parse(await file.text());}catch {throw new Error("项目包无法读取，请选择青迹导出的JSON文件。");}
       await flushEdits();const p=await request("/api/projects",{action:"import",package:data,actor:actorName});acceptProject(p);
-      setAllowAI(false);setToast("已导入为独立项目，材料授权请重新确认");
+      setToast("已导入为独立项目，请检查本轮纳入的材料");
     }catch(e){setError(e.message);}finally{setBusy(false);if(packageInput.current)packageInput.current.value="";}
   }
 
@@ -517,7 +526,7 @@ export function App() {
     if(busy||planOperation.current)return;
     if(hasEdits||projectRef.current?.needs_review){setToast("正文或资料已变化，先复查后再生成补证计划");return;}
     planOperation.current=true;setPlanningIssue(issue.id);setBusy(true);setError("");
-    try {await persist();const p=projectRef.current;const mode=status?.ai_configured&&allowAI?"ai":"template";
+    try {await persist();const p=projectRef.current;const mode="ai";
       const plan=await request("/api/plan",{project_id:p.id,version:p.version,issue_id:issue.id,mode,allow_external_processing:allowAI});
       setPracticePlan(plan);
     }catch(e){setError(e.message);}finally{planOperation.current=false;setPlanningIssue(null);setBusy(false);}
@@ -532,15 +541,16 @@ export function App() {
     if(busy||operationRef.current)return;
     setBusy(true);setError("");
     try {await persist();const material=file?await readFile(file):null;const p=await projectAction("supplement",{issue_id:issue.id,material});
-      setMaterials(p.materials);
+      setMaterials(p.materials.map(m=>({...m,consent_status:"confirmed"})));
       if(file){setFocusMaterial(p.materials.at(-1).id);setScreen("materials");}
-      setToast(file?"已关联到这条结论，完善来源与授权后可直接复查":"已记入本项目补证待办");}
+      setToast(file?"已关联到这条结论，完善来源后可直接复查":"已记入本项目补证待办");}
     catch(e){setError(e.message);}finally{setBusy(false);if(supplementInput.current)supplementInput.current.value="";}
   }
 
   function locateTask(task) {
+    if(!mayLeavePractice())return;
     const match = matchTaskIssue(task, {result});
-    if (match.status === "unique") return locateIssue(match.issue.id);
+    if (match.status === "unique") return locateIssue(match.issue.id, true);
     if (match.status === "ambiguous") {
       setIssueFilter("all"); setActiveId(null); setTab("feedback");
       setTaskCandidates(match.matches.map(i => i.id));
@@ -550,7 +560,8 @@ export function App() {
     }
   }
 
-  function locateIssue(issueId) {
+  function locateIssue(issueId, leaveConfirmed=false) {
+    if(!leaveConfirmed&&!mayLeavePractice())return;
     const issue = result?.issues?.find((i) => i.id === issueId);
     if (issue) {
       setScreen("review");
@@ -582,7 +593,7 @@ export function App() {
     if (!files.length || busy) return;
     if (materials.length + files.length > 8) return setError("每次请提供不超过八份补充材料。");
     setBusy(true); setError("");
-    try {const added = await Promise.all(Array.from(files).map(readFile));const all=[...materials,...added.map(m=>({...m,id:"m"+crypto.randomUUID(),consent_status:"unconfirmed",enabled:true}))];if(projectRef.current){const p=await persist({materials:all});setMaterials(p.materials);setToast("材料已保存，请确认来源与授权");}else setMaterials(all);}
+    try {const added = await Promise.all(Array.from(files).map(readFile));const all=[...materials,...added.map(m=>({...m,id:"m"+crypto.randomUUID(),consent_status:"confirmed",enabled:true}))];if(projectRef.current){const p=await persist({materials:all});setMaterials(p.materials.map(m=>({...m,consent_status:"confirmed"})));setToast("材料已保存，纳入的内容将用于 AI 分析");}else setMaterials(all);}
     catch (e) {setError(e.message);} finally {setBusy(false); if (materialsInput.current) materialsInput.current.value = "";}
   }
 
@@ -592,13 +603,13 @@ export function App() {
     if (!document?.text.trim()) return setError("请先上传报告或粘贴正文。");
     operationRef.current=true;setBusy(true);setReviewing(true);setError("");
     try {const p=await request("/api/projects",{action:"create",name:document.name.replace(/\.(docx|pdf|txt|md)$/i,""),report:document,materials:materials.map(m=>({...m,consent_status:allowAI?"confirmed":m.consent_status}))});acceptProject(p);
-      acceptProject(await projectAction("review",{report:document,mode:status?.ai_configured&&allowAI?"ai":"preliminary",allow_external_processing:allowAI}),"review");}
+      acceptProject(await projectAction("review",{report:document,mode:"ai",allow_external_processing:allowAI}),"review");}
     catch (e) {setError(e.message);} finally {operationRef.current=false;setReviewing(false);setBusy(false);}
   }
 
   async function openExample() {
     setBusy(true); setError("");
-    try {await persist();acceptProject(await request("/api/projects",{action:"example"}),"review");setAllowAI(false);} catch(e) {setError(e.message);} finally {setBusy(false);}
+    try {await persist();acceptProject(await request("/api/projects",{action:"example"}),"review");} catch(e) {setError(e.message);} finally {setBusy(false);}
   }
 
   function locate(issue) {
@@ -641,17 +652,16 @@ export function App() {
   }
 
   async function recheck(fromOverview=false) {
+    if(!mayLeavePractice())return;
     if(operationRef.current||busy)return;
     const previousQuote=selectedIssue?.quote;
-    let mode = fromOverview===true ? (status?.ai_configured&&allowAI?"ai":"preliminary") : result.mode;
-    if(mode==="ai"&&!allowAI){reviewConsent.current?.focus();setToast("勾选本轮AI处理范围后，即可在这里复查");return;}
+    let mode = "ai";
     operationRef.current=true;
     setBusy(true); setError("");
     setReviewing(true);
     try {
       if (mode === "example" && manualText !== null) mode = "preliminary";
       if (mode === "example" && projectRef.current.needs_review) mode=status?.ai_configured&&allowAI?"ai":"preliminary";
-      if (mode==="ai"&&!allowAI) throw new Error("请在实践项目页确认本次报告与已授权材料的AI处理范围。");
       await persist();
       const updated=await projectAction("review",{report:currentReport,mode,allow_external_processing:allowAI});
       acceptProject(updated,"review");
@@ -664,7 +674,6 @@ export function App() {
   async function ask(text = question) {
     if (!text.trim() || !selectedIssue || chatOperationRef.current || chatBusy || busy) return;
     if(projectRef.current?.needs_review||hasEdits||editing){setToast("正文或材料已变化，复查后再追问");return;}
-    if(result.mode==="ai"&&!allowAI){reviewConsent.current?.focus();setToast("先勾选本轮AI处理范围，再继续追问");return;}
     chatOperationRef.current=true;
     const outgoing = text.trim(); setQuestion(""); setChatBusy(true); setError(""); setTab("chat");
     setChat((items) => [...items, {role: "user", text: outgoing, issueId: selectedIssue.id}]);
@@ -726,7 +735,7 @@ export function App() {
     <input type="file" multiple ref={materialsInput} accept=".docx,.pdf,.txt,.md" className="file-input" aria-label="补充依据材料" onChange={e=>uploadMaterials(e.target.files)}/>
     <input type="file" ref={supplementInput} accept=".docx,.pdf,.txt,.md" className="file-input" aria-label="为当前结论补充材料" onChange={e=>{if(supplementTarget.current&&e.target.files[0])supplement(supplementTarget.current,e.target.files[0]);}}/>
     <input type="file" ref={packageInput} accept=".json" className="file-input" aria-label="导入青迹项目包" onChange={e=>importPackage(e.target.files[0])}/>
-    <header className="topbar">
+    {screen === "review" && <header className="topbar">
       <button className="brand" aria-label="青迹首页" onClick={goHome} disabled={busy||chatBusy}><img src="/assets/qingji-wordmark.png" alt="青迹"/></button>
       {screen === "review" ? <>
         <span className="brand-divider"/>
@@ -778,7 +787,7 @@ export function App() {
           )}
         </div>
       </> : <span className="brand-subtitle">{project?.name||"社会实践 · 证据与结论"}</span>}
-    </header>
+    </header>}
     {error && <div className="error-message" role="alert"><span>{error}</span><button className="icon-button" aria-label="关闭提示" onClick={() => setError("")}><Icon as={IconX}/></button></div>}
     {toast && <div className="toast" role="status"><Icon as={IconCheck}/>{toast}</div>}
     {recoverableDraft&&project&&<div className="draft-recovery" role="status"><span>有一份未保存的正文草稿{recoverableDraft.base_version!==project.version?"，项目已有更新":""}。</span><button className="text-button" onClick={recoverEditor} disabled={busy}>继续编辑草稿</button><button className="text-button" onClick={()=>clearEditorDraft()} disabled={busy}>舍弃草稿</button></div>}
@@ -786,8 +795,10 @@ export function App() {
 
     {screen === "home" ? <main className="home-content">
       <section className="intro">
-        <div className="intro-copy"><p className="eyebrow">青迹 · 可信社会实践</p><h1>从一个实践问题，<br/>走向有依据的发现。</h1><p className="intro-description">确定方向、开展行动、留下记录，再核对报告。</p><button className="primary home-start-practice" onClick={newProject} disabled={busy}>开始一项实践<Icon as={IconArrowUpRight}/></button><button className="example-link" onClick={openExample} disabled={busy}><Icon as={IconArrowUpRight}/>看看一份审阅示例</button></div>
-        <details className="home-report-entry"><summary>已有报告，直接开始复核</summary><div className="upload-area">
+        <div className="intro-copy"><p className="eyebrow">青迹 · 可信社会实践</p><h1>带着问题出发，<br/>让每一步留下依据。</h1><p className="intro-description">从走访、记录，到有依据的社会实践报告。</p></div>
+        <div className="home-entry-grid">
+        <article className="start-practice-card"><FieldworkArt/><p className="entry-kicker">从实践出发</p><h2>一个问题，一段实践</h2><p>确定方向，安排下一步行动。</p><button className="primary home-start-practice" onClick={newProject} disabled={busy}>开始一项实践<Icon as={IconArrowUpRight}/></button></article>
+        <details className="home-report-entry"><summary><FieldworkArt kind="notes"/><span className="entry-kicker">从报告继续</span><strong>让发现有据可循</strong><span className="entry-description">对照原始材料，核对报告中的结论。</span><span className="entry-link">已有报告，直接开始复核 <Icon as={IconArrowUpRight}/></span></summary><div className="upload-area">
           <div className={`dropzone ${report && !showPaste ? "has-document" : ""}`} onDragOver={(e) => e.preventDefault()} onDrop={(e) => {e.preventDefault(); uploadReport(e.dataTransfer.files[0]);}}>
             <button className="dropzone-button" disabled={busy} onClick={() => reportInput.current?.click()}><Icon as={busy ? IconLoader2 : report && !showPaste ? IconFileText : IconFileUpload} size={42} className={busy ? "spin" : ""}/><strong>{report && !showPaste ? report.name : "点击上传，或拖入报告"}</strong><span>{report && !showPaste ? "已读取正文 · 点击更换文件" : "DOCX / 文字PDF / TXT / Markdown · 最大5 MB"}</span></button>
           </div>
@@ -795,21 +806,22 @@ export function App() {
           {!!report?.notes?.length&&!showPaste&&<details className="file-read-notes"><summary>文件读取说明</summary>{report.notes.map((note,i)=><p key={i}>{note}</p>)}</details>}
           {showPaste && <label className="paste-area">报告正文<textarea value={paste} onChange={(e) => setPaste(e.target.value)} placeholder="粘贴社会实践报告全文，包含前文依据与结论……" rows={8}/></label>}
           <div className="material-section"><button className="text-button" onClick={() => materialsInput.current?.click()} disabled={busy}><Icon as={IconPlus}/>补充访谈、记录或统计摘要<span className="optional">可选</span></button>{materials.map((m, index) => <div className="material-row" key={`${m.name}-${index}`}><Icon as={IconFileText}/><span>{m.name}</span><button className="icon-button" aria-label={`移除材料${m.name}`} disabled={busy} onClick={() => setMaterials(materials.filter((_, i) => i !== index))}><Icon as={IconX} size={16}/></button></div>)}</div>
-          {status?.ai_configured ? <><label className="processing-choice"><input type="checkbox" checked={allowAI} disabled={busy} onChange={(e) => setAllowAI(e.target.checked)}/>已获得材料授权，本轮使用AI核对报告与补充材料。</label><details className="processing-details"><summary>处理范围</summary><p>勾选后发送本次报告和材料至已配置AI服务。常见手机号、邮箱和身份证号会先遮盖，其他识别信息请自行处理。</p></details></> : <p className="processing-note">本地预检 · 文件留在本机</p>}
+          <p className="processing-note">默认使用 AI 分析报告与纳入的材料。</p>
           <button className="primary start-button" disabled={busy || !status || !(showPaste ? paste.trim() : report?.text)} onClick={startReview}>{busy ? <><Icon as={IconLoader2} className="spin"/>正在处理</> : <>开始检查<Icon as={IconArrowUpRight}/></>}</button>
         </div></details>
+        </div><button className="example-link" onClick={openExample} disabled={busy}><Icon as={IconArrowUpRight}/>看看一份审阅示例</button>
       </section>
       <ProjectCards projects={projects} onOpen={openProject} onNew={newProject} onImport={()=>packageInput.current?.click()} onArchive={archiveProject} busy={busy}/>
       <footer className="home-footer">让实践有记录，让结论有依据。</footer>
-    </main> : screen!=="review"&&project ? screen==="materials" ?
+    </main> : screen!=="review"&&project ? screen==="review-start" ? <ReviewStart onDraftChange={setPracticeDraft} project={project} materials={materials} busy={busy} onUpload={()=>reportInput.current?.click()} onSave={saveDetails} onStart={()=>recheck(true)}/> : screen==="materials" ?
       <MaterialsPanel materials={materials} reviewMaterials={project.review_materials} result={result} tasks={project.tasks} focusMaterial={focusMaterial} onChange={(index,change)=>setMaterials(items=>items.map((m,i)=>i===index?{...m,...change}:m))}
         onSave={()=>saveDetails({materials})} onUpload={()=>materialsInput.current?.click()} onQuickRecord={()=>openQuickRecord()} onEdit={openQuickRecord} onRemove={removeMaterial}
         onPreview={m=>setCitation({document_id:m.id,start:0,end:0,quote:"",live:true})} onPreviewCitation={c=>setCitation({...c,live:false})} onLocateIssue={locateIssue} onReview={()=>navigate("review")} onRecheck={()=>recheck(true)}
-        hasReport={!!report?.text?.trim()} allowAI={allowAI} onAllowAI={setAllowAI} aiConfigured={status?.ai_configured} busy={busy} needsReview={project.needs_review}/>
-      : <ProjectOverview onPractice={async(action, values)=>{const p=await teamAction(action,values,"实践进展已保存");acceptProject(p,"project",{preserveTab:true});return p;}} project={project} result={result} onSave={saveDetails} onUpload={()=>reportInput.current?.click()} onReview={()=>navigate("review")}
+        hasReport={!!report?.text?.trim()} allowAI={allowAI} aiConfigured={status?.ai_configured} busy={busy} needsReview={project.needs_review}/>
+      : <ProjectOverview key={project.id} reportRequest={reportRequest} onDraftChange={setPracticeDraft} hasPracticeDraft={practiceDraft} onPractice={async(action, values)=>{const p=await teamAction(action,values,"实践进展已保存");acceptProject(p,"project",{preserveTab:true});return p;}} project={project} result={result} onSave={saveDetails} onUpload={()=>reportInput.current?.click()} onReview={()=>navigate("review")}
         deliveryCheck={<DeliveryCheck version={project.version} hasEdits={editing||JSON.stringify(workingState())!==savedState.current} busy={busy} onCheck={loadDeliveryCheck} onNavigate={navigate}/>}
         onMaterials={()=>navigate("materials")} onQuickRecord={()=>openQuickRecord()} onRecheck={()=>recheck(true)} onTask={taskAction} onLocate={locateTask} onRevision={showRevision} revision={revision} revisionLoading={revisionLoading}
-        allowAI={allowAI} onAllowAI={setAllowAI} aiConfigured={status?.ai_configured} busy={busy} actor={actorId} onActor={setActor} hasEdits={hasEdits||editing}
+        allowAI={allowAI} aiConfigured={status?.ai_configured} busy={busy} actor={actorId} onActor={setActor} hasEdits={hasEdits||editing}
         onMembers={members=>teamAction("members",{members},"成员分工已保存")}
         onTaskDetail={(task,changes)=>teamAction("task_detail",{task_id:task.id,changes},"任务分工已保存")}
         onCreateTask={task=>teamAction("create_task",{action_text:task.action,assignee_id:task.assignee_id,due_date:task.due_date,notes:task.notes},"实践任务已建立")}
@@ -818,7 +830,6 @@ export function App() {
       : <>
       <div className="backbar"><button className="text-button" onClick={()=>navigate("project")} disabled={busy||chatBusy}><Icon as={IconArrowLeft}/>实践项目</button><div className="workspace-actions">{hasEdits && <><span className="pending-note">正文已修改，待复查</span><button className="text-button" onClick={() => {setChoices({}); setManualText(null); setToast("已恢复本次检查时的原文");}} disabled={busy}>撤销修改</button></>}<button className="text-button" disabled={busy || editing} onClick={()=>recheck()}><Icon as={busy ? IconLoader2 : IconRefresh} className={busy ? "spin" : ""}/>{busy ? "正在复查" : "复查"}</button></div></div>
       {project?.needs_review&&<div className="material-change-note review-change-note">项目材料已变化，当前结论依据尚未复查。<button className="text-button" onClick={()=>navigate("materials")}>查看材料</button></div>}
-      {result.mode==="ai"&&!allowAI&&<label className="processing-choice review-consent"><input ref={reviewConsent} type="checkbox" checked={allowAI} onChange={e=>setAllowAI(e.target.checked)} disabled={busy}/>本轮复查与追问将报告及已授权、未排除材料发送至AI服务。勾选后可在当前页面继续。</label>}
       <div className="mobile-switch" role="tablist" aria-label="切换审阅区域"><button role="tab" aria-selected={mobilePane === "document"} onClick={() => setMobilePane("document")}>报告原文</button><button role="tab" aria-selected={mobilePane === "feedback"} onClick={() => setMobilePane("feedback")}>审阅反馈</button></div>
       <main className={`workspace show-${mobilePane}`} aria-busy={busy}>
         <section className="document-pane" aria-label="报告原文" style={{"--reading-offset": `${readingSize - 18}px`}}>

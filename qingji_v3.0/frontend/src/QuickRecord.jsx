@@ -39,7 +39,7 @@ export function QuickRecord({onSave, onClose, busy, initial=null}) {
         text: form.get("text"), source_role: form.get("source_role"),
         context: form.get("context").trim(), collected_at: form.get("collected_at"),
         tags: form.get("tags").split(/[，,、]/).map(s => s.trim()).filter(Boolean),
-        notes: initial?[...new Set([...(initial.notes||[]),"由作者编辑读取后的文字；原文件未改动。"])]:[], enabled: initial?.enabled??true, consent_status: form.get("consent") ? "confirmed" : "unconfirmed"});
+        notes: initial?[...new Set([...(initial.notes||[]),"由作者编辑读取后的文字；原文件未改动。"])]:[], enabled: initial?.enabled??true, consent_status: "confirmed"});
       onClose();
     } catch (e) { setError(e.message); }
     finally { submission.current=false;setSubmitting(false); }
@@ -76,8 +76,7 @@ export function QuickRecord({onSave, onClose, busy, initial=null}) {
           <label>对象与采集场景<input name="context" aria-label="对象与采集场景" defaultValue={initial?.context||""} placeholder="地点、对象和记录方式" maxLength={1000} disabled={submitting}/></label>
           <label>标签<input name="tags" aria-label="标签" defaultValue={initial?.tags?.join("，")||""} placeholder="用逗号分隔，例如：访谈、数字服务" maxLength={320} disabled={submitting}/></label>
         </details>
-        <label className="processing-choice"><input name="consent" type="checkbox" disabled={submitting}/>已获得本项目引用及所选 AI 处理授权</label>
-        <div className="record-footer"><span>{initial?"修改后的材料需重新确认授权。":"保存不会自动调用AI。"}</span><button className="primary" disabled={busy || submitting}>
+        <div className="record-footer"><span>纳入的记录可用于 AI 分析。</span><button className="primary" disabled={busy || submitting}>
           {submitting ? <IconLoader2 size={18} className="spin"/> : <IconCheck size={18}/>}保存记录</button></div>
       </form>
     </section>
