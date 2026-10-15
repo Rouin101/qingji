@@ -1,0 +1,18 @@
+.practice-plan{margin-top:16px;padding-top:12px;border-top:1px solid var(--line)}
+.plan-generate{display:flex;gap:8px;align-items:center;min-height:40px;font-size:14px}
+.plan-content>summary{display:flex;align-items:center;gap:10px;color:var(--ink);font-weight:650;cursor:pointer;padding:8px 0}
+.plan-content>summary>span{font-size:12px;font-weight:400;color:var(--purple);background:var(--purple-soft);padding:3px 8px;border-radius:5px}
+.plan-notice{font-size:13px!important;color:var(--muted)!important;margin:4px 0 12px!important}
+.plan-sections{background:#fbf9fe;border:1px solid var(--line);border-radius:8px;padding:0 12px}
+.plan-sections>details+details{border-top:1px solid var(--line)}
+.plan-sections summary,.plan-content form>details>summary{cursor:pointer;padding:11px 0;font-size:14px;color:var(--purple)}
+.plan-sections ol,.plan-sections ul{padding-left:24px;line-height:1.7;margin:0 0 14px}
+.plan-sections li+li{margin-top:12px}.plan-sections li p{margin:0!important;font-size:16px!important}
+.plan-sections small{font-size:13px;color:var(--muted);display:block;margin-top:4px;line-height:1.7}
+.plan-fields{font-size:13px!important;color:var(--muted)!important;border-top:1px dashed var(--line);padding-top:12px}
+.plan-content form{margin-top:16px;display:grid;gap:6px}.plan-content form label{font-size:13px;color:var(--muted);display:grid;gap:6px}
+.plan-content input,.plan-content textarea{width:100%;font:inherit;font-size:16px;color:var(--ink);border:1px solid var(--line);border-radius:8px;background:white;padding:10px 12px;box-sizing:border-box}
+.plan-content textarea{resize:vertical;line-height:1.7}.plan-content form small{font-size:12px;color:var(--muted)}
+.plan-actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:8px}.plan-actions>span{font-size:12px;color:var(--muted)}
+.issue-discussion{margin-top:16px;padding-top:8px;border-top:1px solid var(--line)}.issue-discussion>summary{cursor:pointer;font-size:14px;color:var(--purple);padding:8px 0}
+.discussion-actor{display:flex;gap:8px;align-items:center;margin:8px 0;font-size:13px;color:var(--muted)}.discussion-actor select{font:inherit;max-width:200px;padding:5px 8px;border:1px solid var(--line);border-radius:6px;background:#fff}

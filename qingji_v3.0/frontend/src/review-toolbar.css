@@ -1,0 +1,261 @@
+/* 结论筛选与逐条导航工具栏样式 */
+
+.review-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  background: #faf8fc;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  margin-bottom: 14px;
+}
+
+.task-match-notice {padding:12px;background:white;border:1px solid var(--line);border-radius:9px;margin:12px 0;}
+.task-match-notice p {margin:0 0 10px;font-size:14px;}
+.task-match-notice>div {display:flex;flex-wrap:wrap;gap:8px;}
+.task-match-notice .secondary {font-size:13px;}
+
+.review-toolbar-filters {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.toolbar-filter-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 29px;
+  padding: 0 10px;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.toolbar-filter-btn:hover:not(:disabled) {
+  border-color: var(--purple-soft);
+  color: var(--purple-dark);
+}
+
+.toolbar-filter-btn.active {
+  background: var(--purple-pale);
+  border-color: var(--purple-soft);
+  color: var(--purple-dark);
+  font-weight: 500;
+}
+
+.toolbar-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 11px;
+  background: #f0eaf7;
+  color: var(--purple-dark);
+}
+
+.toolbar-filter-btn.active .toolbar-count {
+  background: var(--purple);
+  color: white;
+}
+
+.toolbar-status-select-wrap {
+  display: inline-flex;
+  align-items: center;
+}
+
+.toolbar-status-select {
+  height: 29px;
+  padding: 0 8px;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  outline: none;
+}
+
+.toolbar-status-select:focus-visible {
+  outline: 2px solid var(--purple-soft);
+  outline-offset: 1px;
+}
+
+.toolbar-status-select.active {
+  background: var(--purple-pale);
+  border-color: var(--purple-soft);
+  color: var(--purple-dark);
+  font-weight: 500;
+}
+
+.toolbar-reset-btn {
+  font-size: 11px;
+  color: var(--purple);
+  padding: 4px 6px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.review-toolbar-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.toolbar-nav-pos {
+  font-size: 12px;
+  color: var(--muted);
+  min-width: 42px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+
+.toolbar-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 29px;
+  padding: 0 8px;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--purple-dark);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.toolbar-nav-btn:hover:not(:disabled) {
+  background: var(--purple-pale);
+  border-color: var(--purple-soft);
+}
+
+.toolbar-nav-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background: #f7f7f7;
+  border-color: #e5e5e5;
+  color: #999;
+}
+
+/* 筛选空态 */
+.empty-filter-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 16px;
+  background: white;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  text-align: center;
+  margin: 12px 0;
+}
+
+.empty-filter-state p {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 0 0 12px;
+}
+
+/* 结论卡片标题区标签分离：支持程度为主状态，作者取舍为次级标记 */
+.issue-header-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  flex-wrap: nowrap;
+}
+
+.category-pill.support-pill {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.support-pill.status-supported {
+  background: #edf7ed;
+  color: #2e7d32;
+  border: 1px solid #c8e6c9;
+}
+
+.support-pill.status-unsupported {
+  background: #fbe9e7;
+  color: #c62828;
+  border: 1px solid #ffcdd2;
+}
+
+.support-pill.status-partial {
+  background: #fff8e1;
+  color: #c57f00;
+  border: 1px solid #ffe082;
+}
+
+.support-pill.status-disagreement {
+  background: #e0f2f1;
+  color: #00695c;
+  border: 1px solid #b2dfdb;
+}
+
+.support-pill.status-pending {
+  background: var(--purple-pale);
+  color: var(--purple);
+  border: 1px solid #e1bee7;
+}
+
+.choice-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 5px;
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.choice-badge.choice-accepted {
+  background: #ede7f6;
+  color: var(--purple-dark);
+  border: 1px solid #d1c4e9;
+}
+
+.choice-badge.choice-kept {
+  background: #f1f2f5;
+  color: #555e69;
+  border: 1px solid #dcdfe4;
+}
+
+/* 窄屏响应式 */
+@media (max-width: 520px) {
+  .review-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 8px 10px;
+  }
+
+  .review-toolbar-filters {
+    width: 100%;
+  }
+
+  .review-toolbar-nav {
+    width: 100%;
+    justify-content: space-between;
+    padding-top: 6px;
+    border-top: 1px dashed var(--line);
+  }
+}

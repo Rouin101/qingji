@@ -1,0 +1,586 @@
+"""Shared Streamlit presentation helpers for 青迹."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from dataclasses import asdict, is_dataclass
+from datetime import date, datetime
+from html import escape
+from typing import Any
+from zoneinfo import ZoneInfo
+
+import streamlit as st
+
+
+_LOCAL_TIMEZONE = ZoneInfo("Asia/Shanghai")
+
+
+EVIDENCE_TYPE_LABELS = {
+    "interview_statement": "受访者陈述",
+    "staff_explanation": "工作人员说明",
+    "field_observation": "团队现场观察",
+    "formal_record": "文献或正式记录",
+    "team_analysis": "团队分析",
+}
+
+CONSENT_LABELS = {
+    "confirmed": "已确认授权",
+    "unknown": "授权待确认",
+    "denied": "未授权",
+}
+
+REVIEW_STATUS_LABELS = {
+    "draft": "待复核（可引用）",
+    "approved": "人工确认（可引用）",
+    "rejected": "已排除",
+}
+
+VERDICT_LABELS = {
+    "supported": "已有支持",
+    "partially_supported": "部分支持",
+    "unsupported": "暂无支持",
+    "contradicted": "存在冲突",
+}
+
+VERDICT_ICONS = {
+    "supported": "✅",
+    "partially_supported": "🟠",
+    "unsupported": "⚪",
+    "contradicted": "⚠️",
+}
+
+VERDICT_COLORS = {
+    "supported": ("#0f766e", "#ecfdf5", "#99f6e4"),
+    "partially_supported": ("#b45309", "#fffbeb", "#fde68a"),
+    "unsupported": ("#475569", "#f8fafc", "#cbd5e1"),
+    "contradicted": ("#b91c1c", "#fef2f2", "#fecaca"),
+}
+
+TASK_STATUS_LABELS = {
+    "open": "待补证",
+    "done": "已完成",
+    "cancelled": "已取消",
+}
+
+NEXT_ACTION_PAGES = {
+    "materials": "pages/1_材料与证据.py",
+    "claims": "pages/2_结论核验.py",
+    "output": "pages/3_成果与缺口.py",
+}
+
+
+@st.cache_resource(show_spinner=False)
+def get_database() -> Any:
+    """Return one initialized database handle per Streamlit process."""
+
+    from .config import settings
+    from .db import Database
+
+    settings.ensure_directories()
+    database = Database(settings.database_path)
+    database.initialize()
+    return database
+
+
+def is_demo_project(project: Mapping[str, Any] | None) -> bool:
+    """Return whether a project is Qingji's built-in workspace."""
+
+    from .demo import DEMO_PROJECT_NAME
+
+    return bool(project and project.get("name") == DEMO_PROJECT_NAME)
+
+
+def get_demo_context() -> tuple[Any, int, dict[str, Any]]:
+    """Load the active project, using the built-in workspace as a fallback."""
+
+    from .demo import ensure_demo_project
+
+    database = get_database()
+    project_id = st.session_state.get("qingji_project_id")
+    project = database.get_project(project_id) if project_id else None
+    if project is None or project.get("archived_at"):
+        project_id = int(ensure_demo_project(database))
+        st.session_state["qingji_project_id"] = project_id
+        project = database.get_project(project_id)
+    if project is None:
+        raise RuntimeError("内置项目初始化失败，请检查本地数据库是否可写。")
+    return database, int(project_id), project
+
+
+def configure_page(title: str, icon: str = "🌱") -> None:
+    """Apply consistent page metadata and compact demo-friendly styling."""
+
+    st.set_page_config(
+        page_title=f"{title}｜青迹",
+        page_icon=icon,
+        layout="wide",
+        initial_sidebar_state="auto",
+    )
+    st.markdown(
+        """
+        <style>
+        :root {
+            --qj-ink: #2b1a45;
+            --qj-muted: #6d6690;
+            --qj-primary: #6b35a0;
+            --qj-primary-strong: #552a82;
+            --qj-primary-soft: #a98fe0;
+            --qj-pale: #f4effb;
+            --qj-line: #e4dcf3;
+        }
+        [data-testid="stAppViewContainer"] {
+            background:
+              radial-gradient(circle at 88% 4%, rgba(107, 53, 160, .10), transparent 24rem),
+              radial-gradient(circle at 8% 96%, rgba(169, 143, 224, .12), transparent 26rem),
+              linear-gradient(180deg, #fdfcff 0, #ffffff 30rem);
+        }
+        [data-testid="stMainBlockContainer"],
+        .block-container {
+            max-width: none;
+            padding: 1.15rem 1.35rem 3rem;
+        }
+        @media (max-width: 768px) {
+            [data-testid="stMainBlockContainer"],
+            .block-container {
+                padding: .85rem 1rem 2rem;
+            }
+        }
+        [data-testid="stSidebar"] {
+            background: linear-gradient(180deg, #f7f4fc 0, #f1ebfa 100%);
+            border-right: 1px solid var(--qj-line);
+        }
+        .qj-sidebar-project {
+            background: #e8defa;
+            border: 1px solid #e8defa;
+            border-radius: .8rem;
+            box-shadow: none;
+            color: var(--qj-ink);
+            line-height: 1.5;
+            margin: .75rem 0 .55rem;
+            padding: .9rem 1rem;
+        }
+        .qj-sidebar-project strong {
+            color: var(--qj-ink);
+            font-size: 1.05rem;
+        }
+        .qj-sidebar-project p {
+            color: #3a2b5e;
+            margin: .55rem 0 0;
+        }
+        h1, h2, h3 { color: var(--qj-ink); letter-spacing: -.02em; }
+        h1 {
+            font-size: clamp(2rem, 3.2vw, 2.75rem);
+            line-height: 1.08;
+            margin-bottom: .65rem;
+            padding-bottom: 0;
+        }
+        h2 { font-size: clamp(1.45rem, 2.2vw, 1.9rem); }
+        h3 { font-size: clamp(1.18rem, 1.8vw, 1.45rem); }
+        .qj-kicker {
+            color: var(--qj-primary);
+            font-size: .82rem;
+            font-weight: 750;
+            letter-spacing: .13em;
+            margin-bottom: .25rem;
+        }
+        .qj-demo-note {
+            background: #eef4ff;
+            border-left: 3px solid #7c93d8;
+            color: #315a91;
+            font-size: .9rem;
+            margin: .15rem 0 .75rem;
+            padding: .5rem .75rem;
+        }
+        .qj-stat-grid {
+            display: grid;
+            gap: .65rem;
+            grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+            margin: .15rem 0 .85rem;
+        }
+        .qj-stat-grid > div {
+            background: rgba(255,255,255,.92);
+            border: 1px solid var(--qj-line);
+            border-radius: .8rem;
+            padding: .65rem .8rem;
+        }
+        .qj-stat-grid dt {
+            color: var(--qj-muted);
+            font-size: .82rem;
+            margin-bottom: .2rem;
+        }
+        .qj-stat-grid dd {
+            color: var(--qj-ink);
+            font-size: 1.65rem;
+            line-height: 1.15;
+            margin: 0;
+        }
+        @media (max-width: 768px) {
+            h1 { font-size: 2.15rem !important; }
+            .qj-stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .qj-stat-grid > div { padding: .55rem .65rem; }
+            .qj-stat-grid dd { font-size: 1.35rem; }
+        }
+        .qj-card {
+            background: rgba(255,255,255,.92);
+            border: 1px solid var(--qj-line);
+            border-radius: .8rem;
+            box-shadow: 0 6px 22px rgba(43, 26, 69, .06);
+            margin: .3rem 0 .8rem;
+            padding: .9rem 1rem;
+            transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+        }
+        .qj-card:hover {
+            border-color: #d2c1f4;
+            box-shadow: 0 10px 28px rgba(107, 53, 160, .12);
+            transform: translateY(-1px);
+        }
+        .qj-card-label {
+            color: var(--qj-muted);
+            font-size: .78rem;
+            font-weight: 700;
+            letter-spacing: .08em;
+            text-transform: uppercase;
+        }
+        .qj-quote {
+            border-left: 3px solid #c9a8ea;
+            color: #3a2b5e;
+            line-height: 1.72;
+            margin: .55rem 0;
+            padding-left: .8rem;
+        }
+        .qj-meta {
+            color: var(--qj-muted);
+            font-size: .84rem;
+            line-height: 1.55;
+        }
+        .qj-verdict {
+            border: 1px solid;
+            border-radius: .85rem;
+            box-shadow: 0 4px 14px rgba(43, 26, 69, .05);
+            margin: .25rem 0 1rem;
+            padding: 1rem 1.1rem;
+        }
+        .qj-verdict strong { font-size: 1.12rem; }
+        .qj-empty {
+            background: linear-gradient(180deg, #faf7ff 0, #f5f0fc 100%);
+            border: 1px dashed #cfc2ee;
+            border-radius: .75rem;
+            color: #6d6690;
+            padding: 1.1rem;
+            text-align: center;
+        }
+        div[data-testid="stMetric"] {
+            background: rgba(255,255,255,.92);
+            border: 1px solid var(--qj-line);
+            border-radius: .8rem;
+            padding: .65rem .8rem;
+        }
+        div[data-testid="stForm"] {
+            background: rgba(255,255,255,.86);
+            border-color: var(--qj-line);
+            border-radius: .85rem;
+            padding: .3rem .65rem .8rem;
+        }
+        .stButton > button[kind="primary"],
+        .stFormSubmitButton > button[kind="primary"],
+        .stDownloadButton > button[kind="primary"] {
+            background: var(--qj-primary);
+            border-color: var(--qj-primary);
+            color: #ffffff !important;
+        }
+        .stButton > button[kind="primary"] *,
+        .stFormSubmitButton > button[kind="primary"] *,
+        .stDownloadButton > button[kind="primary"] * {
+            color: #ffffff !important;
+        }
+        .stButton > button[kind="primary"]:hover,
+        .stFormSubmitButton > button[kind="primary"]:hover,
+        .stDownloadButton > button[kind="primary"]:hover {
+            background: var(--qj-primary-strong);
+            border-color: var(--qj-primary-strong);
+        }
+        .stButton > button[kind="primary"]:disabled,
+        .stFormSubmitButton > button[kind="primary"]:disabled,
+        .stDownloadButton > button[kind="primary"]:disabled {
+            background: #c7b6dc;
+            border-color: #c7b6dc;
+            color: #ffffff !important;
+            opacity: .92;
+        }
+        .stButton > button:focus-visible,
+        .stDownloadButton > button:focus-visible,
+        .stFormSubmitButton > button:focus-visible {
+            outline: 2px solid rgba(107, 53, 160, .5);
+            outline-offset: 2px;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_page_intro(kicker: str, title: str) -> None:
+    st.markdown(f'<div class="qj-kicker">{escape_html(kicker)}</div>', unsafe_allow_html=True)
+    st.title(title)
+
+
+def render_compact_metrics(items: Sequence[tuple[str, Any]]) -> None:
+    """Render responsive summary values without mobile card stacking."""
+
+    cards = "".join(
+        "<div>"
+        f"<dt>{escape_html(label)}</dt>"
+        f"<dd>{escape_html(value)}</dd>"
+        "</div>"
+        for label, value in items
+    )
+    st.markdown(
+        f'<dl class="qj-stat-grid" aria-label="页面摘要">{cards}</dl>',
+        unsafe_allow_html=True,
+    )
+
+
+def get_next_action(progress: Mapping[str, Any]) -> dict[str, str]:
+    """Return one concrete next action for the current project state."""
+
+    materials = int(progress.get("materials", 0) or 0)
+    evidence_cards = int(progress.get("evidence_cards", 0) or 0)
+    eligible_cards = int(
+        progress.get(
+            "eligible_evidence_cards",
+            progress.get("approved_evidence_cards", 0),
+        )
+        or 0
+    )
+    claims = int(progress.get("claims", 0) or 0)
+    open_tasks = int(progress.get("open_followup_tasks", 0) or 0)
+    if materials == 0:
+        return {
+            "key": "materials",
+            "title": "导入一份文字材料",
+            "detail": "填写来源、场景和授权信息，先把材料放进当前项目。",
+            "button": "去导入材料",
+            "page": NEXT_ACTION_PAGES["materials"],
+        }
+    if evidence_cards == 0:
+        return {
+            "key": "materials",
+            "title": "完成材料检查并生成证据卡",
+            "detail": "当前还没有证据卡；请先完成本地脱敏确认。",
+            "button": "去处理材料",
+            "page": NEXT_ACTION_PAGES["materials"],
+        }
+    reviewable_drafts = progress.get("reviewable_draft_evidence_cards")
+    if reviewable_drafts is None:
+        reviewable_drafts = max(0, evidence_cards - eligible_cards)
+    if int(reviewable_drafts or 0) > 0:
+        return {
+            "key": "materials",
+            "title": "复核可引用的证据草稿",
+            "detail": "草稿已可进入核验；人工确认能进一步提高报告可信度。",
+            "button": "去复核证据卡",
+            "page": NEXT_ACTION_PAGES["materials"],
+        }
+    if claims == 0:
+        return {
+            "key": "claims",
+            "title": "核验一句准备写入报告的话",
+            "detail": "输入一句事实性表述，查看它目前能被证据支持到什么程度。",
+            "button": "去开始核验",
+            "page": NEXT_ACTION_PAGES["claims"],
+        }
+    if open_tasks:
+        return {
+            "key": "output",
+            "title": "处理待补证任务",
+            "detail": "查看缺口、补充材料，再回到结论页重新核验。",
+            "button": "去查看补证任务",
+            "page": NEXT_ACTION_PAGES["output"],
+        }
+    return {
+        "key": "output",
+        "title": "查看成果并导出",
+        "detail": "核对结论—证据对应关系，确认无误后导出可信 Markdown。",
+        "button": "去查看成果",
+        "page": NEXT_ACTION_PAGES["output"],
+    }
+
+
+def _next_step_hint(progress: Mapping[str, Any]) -> str:
+    """Return the compact sidebar version of the next-action guidance."""
+
+    return f"下一步：{get_next_action(progress)['title']}"
+
+
+def render_sidebar_note(
+    project: Mapping[str, Any] | None = None,
+    *,
+    database: Any | None = None,
+    project_id: int | None = None,
+) -> None:
+    """Render shared navigation, project context and lightweight progress."""
+
+    progress: Mapping[str, Any] | None = None
+    if database is not None and project_id is not None:
+        try:
+            progress = database.get_project_stats(int(project_id))
+        except Exception:
+            progress = None
+    with st.sidebar:
+        st.page_link("app.py", label="项目概览")
+        st.page_link("pages/1_材料与证据.py", label="材料与证据")
+        st.page_link("pages/2_结论核验.py", label="结论核验")
+        st.page_link("pages/3_成果与缺口.py", label="成果与缺口")
+        st.page_link("pages/4_模型运行中心.py", label="运行与恢复")
+        st.page_link("pages/5_真实试用.py", label="真实试用")
+        if progress is not None:
+            eligible_cards = progress.get(
+                "eligible_evidence_cards",
+                progress.get("approved_evidence_cards", 0),
+            )
+            st.divider()
+            st.markdown("#### 当前进度")
+            st.caption(
+                f"材料 {int(progress.get('materials', 0) or 0)} · "
+                f"可引用证据 {int(eligible_cards or 0)} · "
+                f"结论 {int(progress.get('claims', 0) or 0)} · "
+                f"待补证 {int(progress.get('open_followup_tasks', 0) or 0)}"
+            )
+            st.caption(_next_step_hint(progress))
+            action = get_next_action(progress)
+            st.page_link(action["page"], label=action["button"], icon="➡️")
+        if not (is_demo_project(project) or project is None):
+            project_name = escape(str(project.get("name", "未命名项目")))
+            st.markdown(
+                '<div class="qj-sidebar-project">'
+                f"<strong>当前项目：{project_name}</strong>"
+                "<p>项目切换与新建请返回“项目概览”。</p>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+        st.caption("v1.4 · 真实试用版")
+
+
+def render_demo_notice(project: Mapping[str, Any] | None) -> None:
+    """Make the built-in project's fictional boundary impossible to miss."""
+
+    if is_demo_project(project):
+        st.markdown(
+            '<div class="qj-demo-note">🧪 模拟项目：人物与材料均为虚构数据，'
+            "仅展示产品流程，不代表真实调研结果。</div>",
+            unsafe_allow_html=True,
+        )
+
+
+def row_to_dict(row: Any) -> dict[str, Any]:
+    """Normalize sqlite rows, mappings and dataclasses for presentation."""
+
+    if row is None:
+        return {}
+    if isinstance(row, Mapping):
+        return dict(row)
+    if is_dataclass(row):
+        return asdict(row)
+    keys = getattr(row, "keys", None)
+    if callable(keys):
+        return {key: row[key] for key in keys()}
+    data = getattr(row, "__dict__", None)
+    return dict(data) if isinstance(data, dict) else {}
+
+
+def value(row: Any, key: str, default: Any = "") -> Any:
+    return row_to_dict(row).get(key, default)
+
+
+def enum_value(item: Any) -> str:
+    raw = getattr(item, "value", item)
+    return "" if raw is None else str(raw)
+
+
+def label(mapping: dict[str, str], item: Any, fallback: str = "—") -> str:
+    raw = enum_value(item)
+    return mapping.get(raw, raw or fallback)
+
+
+def format_datetime(item: Any) -> str:
+    if item in (None, ""):
+        return "—"
+    if isinstance(item, datetime):
+        parsed = item
+    elif isinstance(item, date):
+        return item.strftime("%Y-%m-%d")
+    text = str(item).replace("T", " ")
+    if len(text) == 10:
+        return text
+    if not isinstance(item, datetime):
+        try:
+            parsed = datetime.fromisoformat(str(item).replace("Z", "+00:00"))
+        except ValueError:
+            return text[:16] if len(text) >= 16 else text
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(_LOCAL_TIMEZONE)
+    return parsed.strftime("%Y-%m-%d %H:%M")
+
+
+def verdict_box(verdict: Any, reason: str) -> None:
+    raw = enum_value(verdict)
+    foreground, background, border = VERDICT_COLORS.get(
+        raw, ("#334155", "#f8fafc", "#cbd5e1")
+    )
+    icon = VERDICT_ICONS.get(raw, "🔎")
+    title = VERDICT_LABELS.get(raw, raw or "尚未核验")
+    st.markdown(
+        (
+            f'<div class="qj-verdict" style="color:{foreground};'
+            f'background:{background};border-color:{border}">'
+            f"<strong>{icon} {escape_html(title)}</strong><br>"
+            f'<span style="line-height:1.7">{escape_html(reason or "暂无判断说明")}</span>'
+            "</div>"
+        ),
+        unsafe_allow_html=True,
+    )
+
+
+def evidence_card_html(card: Any) -> str:
+    data = row_to_dict(card)
+    evidence_id = data.get("id", "—")
+    title = data.get("title") or f"证据 E{evidence_id}"
+    quote = data.get("quote") or data.get("redacted_text") or "暂无摘录"
+    evidence_type = label(EVIDENCE_TYPE_LABELS, data.get("evidence_type"))
+    role = data.get("source_role") or "来源角色未填写"
+    context = data.get("context") or "场景未填写"
+    locator = data.get("source_locator") or data.get("locator") or "位置待补充"
+    consent = label(CONSENT_LABELS, data.get("consent_status"))
+    review = label(REVIEW_STATUS_LABELS, data.get("review_status"))
+    simulation = " · 模拟演示数据" if bool(data.get("is_fictional")) else ""
+    return (
+        '<div class="qj-card">'
+        f'<div class="qj-card-label">E{escape_html(evidence_id)} · '
+        f"{escape_html(evidence_type)}</div>"
+        f"<strong>{escape_html(title)}</strong>"
+        f'<div class="qj-quote">{escape_html(quote)}</div>'
+        f'<div class="qj-meta">来源角色：{escape_html(role)} · '
+        f"场景：{escape_html(context)}<br>"
+        f"定位：{escape_html(locator)} · {escape_html(consent)} · "
+        f"{escape_html(review)}{escape_html(simulation)}</div>"
+        "</div>"
+    )
+
+
+def empty_state(message: str) -> None:
+    st.markdown(
+        f'<div class="qj-empty">{escape_html(message)}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def escape_html(value_: Any) -> str:
+    text = "" if value_ is None else str(value_)
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&#x27;")
+        .replace("\n", "<br>")
+    )
