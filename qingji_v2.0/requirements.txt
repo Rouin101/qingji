@@ -1,0 +1,2 @@
+# DOCX/TXT/Markdown与项目库沿用Python标准库；以下用于文字PDF读取。
+pypdf==6.14.2

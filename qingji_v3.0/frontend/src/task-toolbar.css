@@ -1,0 +1,560 @@
+/* 任务与待办工具栏、逾期标记及首页卡片状态短标记样式 */
+
+.task-filter-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.task-filter-toolbar .segment-control {
+  display: inline-flex;
+  gap: 4px;
+  background: #f3eff9;
+  padding: 3px;
+  border-radius: 8px;
+}
+
+.task-filter-toolbar .segment-control button {
+  font-size: 13px;
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #555;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.15s ease;
+}
+
+.task-filter-toolbar .segment-control button[aria-selected="true"] {
+  background: white;
+  color: #5c1380;
+  font-weight: 600;
+  border-color: #d8cce8;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.task-filter-toolbar .toolbar-count {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: rgba(92, 19, 128, 0.08);
+  color: #5c1380;
+  font-weight: 500;
+}
+
+.task-more-filters {
+  font-size: 13px;
+}
+
+.task-more-filters summary {
+  cursor: pointer;
+  color: #5c1380;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+.task-more-filters summary:hover {
+  background: #f5f0fb;
+}
+
+.filter-active-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #8a3ffc;
+  display: inline-block;
+}
+
+.task-filter-fields {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 10px 14px;
+  background: #faf8fc;
+  border: 1px solid #e2daf0;
+  border-radius: 8px;
+  margin-top: 8px;
+  width: 100%;
+}
+
+.task-filter-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #666;
+}
+
+.task-filter-field select {
+  font-size: 13px;
+  padding: 4px 8px;
+  border: 1px solid #d4c5ea;
+  border-radius: 6px;
+  background: white;
+  color: #333;
+}
+
+/* 任务卡片逾期标记 */
+.task-due-date {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.task-due-date.is-overdue {
+  color: #b91c1c;
+  font-weight: 500;
+}
+
+.task-overdue-tag {
+  display: inline-block;
+  font-size: 11px;
+  line-height: 1.2;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #fee2e2;
+  color: #b91c1c;
+  font-weight: 600;
+  border: 1px solid #fecaca;
+  margin-left: 4px;
+}
+
+/* 首页卡片短状态标记 */
+.project-tile-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0;
+}
+
+.tile-status-badge {
+  font-size: 11px;
+  line-height: 1.35;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+}
+
+.tile-status-badge.badge-unreviewed {
+  background: #fbf9fd;
+  border: 1px solid #d4c5ea;
+  color: #6e5987;
+}
+
+.tile-status-badge.badge-imported {
+  background: #fef3c7;
+  border: 1px solid #fcd34d;
+  color: #92400e;
+}
+
+.tile-status-badge.badge-needs-review {
+  background: #f5f0fb;
+  border: 1px solid #e3d4f5;
+  color: #6929c4;
+}
+
+.tile-status-badge.badge-overdue {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+.tile-status-badge.badge-example {
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
+  color: #4b5563;
+}
+
+@media (max-width: 600px) {
+  .task-filter-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .task-filter-fields {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+/* 阶段3：补证任务核对反馈与材料作用区 */
+.task-resident-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #634b82;
+  background: #f7f3fb;
+  padding: 5px 10px;
+  border-radius: 6px;
+  border: 1px solid #ebdff5;
+  margin: 6px 0 10px 0;
+}
+
+.task-review-feedback {
+  margin: 8px 0;
+  border: 1px solid #ded5eb;
+  border-radius: 8px;
+  background: #faf8fc;
+  font-size: 13px;
+}
+
+.task-review-feedback summary {
+  padding: 8px 12px;
+  cursor: pointer;
+  color: #5c1380;
+  font-weight: 600;
+  user-select: none;
+  border-radius: 7px;
+  transition: background 0.15s ease;
+}
+
+.task-review-feedback summary:hover {
+  background: #f1e9f8;
+}
+
+.task-review-feedback[open] summary {
+  border-bottom: 1px solid #e7deee;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.task-review-feedback-body {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.feedback-claim-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.feedback-claim-quote {
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: #222;
+  margin: 0;
+  flex: 1;
+}
+
+.feedback-subheading {
+  font-size: 12px;
+  font-weight: 600;
+  color: #6a5382;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  display: block;
+  margin-bottom: 4px;
+}
+
+.feedback-next-step p {
+  font-size: 13px;
+  color: #444;
+  margin: 0;
+  background: white;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid #e5dfee;
+}
+
+.feedback-materials-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.feedback-material-item {
+  background: white;
+  padding: 10px;
+  border-radius: 6px;
+  border: 1px solid #e5dfee;
+}
+
+.feedback-material-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.feedback-material-header strong {
+  font-size: 13px;
+  color: #333;
+}
+
+.feedback-chip {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #f3f4f6;
+  color: #4b5563;
+  border: 1px solid #e5e7eb;
+}
+
+.feedback-chip.included {
+  background: #f0fdf4;
+  color: #166534;
+  border-color: #bbf7d0;
+}
+
+.feedback-chip.excluded {
+  background: #fef2f2;
+  color: #991b1b;
+  border-color: #fecaca;
+}
+
+.feedback-chip.warning {
+  background: #fffbeb;
+  color: #b45309;
+  border-color: #fde68a;
+}
+
+.feedback-chip.notice {
+  background: #f5f3ff;
+  color: #6d28d9;
+  border-color: #ddd6fe;
+}
+
+.feedback-material-citations {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+  padding-left: 8px;
+  border-left: 2px solid #9f75d8;
+}
+
+.feedback-citation {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: #333;
+}
+
+.citation-relation-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: #ede6f6;
+  color: #5c1380;
+  white-space: nowrap;
+}
+
+.citation-quote {
+  color: #374151;
+  font-style: italic;
+}
+
+.feedback-not-cited {
+  font-size: 12px;
+  color: #6b7280;
+  margin: 4px 0 0 0;
+  font-style: italic;
+}
+
+.feedback-unmatched {
+  font-size: 13px;
+  color: #555;
+  line-height: 1.5;
+}
+
+.feedback-footer {
+  margin-top: 6px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* Phase 5: 材料卡反向关联结论样式 */
+.material-citations-wrap {
+  margin: 8px 0 10px 0;
+}
+
+.material-citations-empty {
+  font-size: 13px;
+  color: #6b7280;
+  margin: 4px 0;
+  background: #faf8fd;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px dashed #dfd5ed;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.material-citations-details {
+  font-size: 13px;
+  background: #faf8fd;
+  border: 1px solid #e5daf3;
+  border-radius: 8px;
+  margin: 6px 0;
+  overflow: hidden;
+}
+
+.material-citations-details summary {
+  padding: 8px 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 500;
+  color: #5c1380;
+  user-select: none;
+  background: #f7f3fb;
+  transition: background 0.15s ease;
+}
+
+.material-citations-details summary:hover {
+  background: #efe7f8;
+}
+
+.material-citations-details[open] summary {
+  border-bottom: 1px solid #e5daf3;
+}
+
+.material-snapshot-badge {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #fff7ed;
+  color: #c2410c;
+  border: 1px solid #ffedd5;
+  margin-left: 8px;
+  font-weight: 500;
+}
+
+.material-citations-body {
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.material-cited-issue {
+  background: white;
+  border: 1px solid #ede4f7;
+  border-radius: 6px;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cited-issue-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cited-issue-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cited-support-badge {
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: #f3f4f6;
+  color: #374151;
+}
+
+.cited-support-badge.badge-supported {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.cited-support-badge.badge-partial {
+  background: #fefce8;
+  color: #a16207;
+}
+
+.cited-support-badge.badge-unsupported {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.cited-support-badge.badge-disagreement {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.cited-relation-badge {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #ede6f6;
+  color: #5c1380;
+  font-weight: 500;
+}
+
+.cited-issue-quote {
+  font-size: 13px;
+  color: #1f2937;
+  margin: 0;
+  line-height: 1.5;
+  font-weight: 500;
+}
+
+.cited-excerpts-list {
+  margin: 4px 0 0 0;
+  padding-left: 10px;
+  border-left: 2px solid #c8b0e8;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cited-excerpt-item {
+  font-size: 12.5px;
+  color: #4b5563;
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cited-excerpt-item span {
+  font-style: italic;
+  flex: 1;
+}
+
+.cited-locate-btn, .cited-preview-btn {
+  font-size: 12px;
+  padding: 2px 6px;
+  white-space: nowrap;
+}
+
+

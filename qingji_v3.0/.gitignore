@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+output/
+data/
+node_modules/
+frontend/dist/
+.browser-profile/
+.browser-test-output/
+.reference-v1/
+
+design/version-preservation.json
+.local-sync/
+*.log

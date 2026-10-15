@@ -1,0 +1,15 @@
+.record-dialog {width:min(640px,100%);max-height:90dvh;overflow:auto;background:white;border-radius:14px;border:1px solid var(--line);box-shadow:0 24px 80px #2b1a452b;}
+.record-dialog header {display:flex;align-items:center;justify-content:space-between;padding:22px 26px;border-bottom:1px solid var(--line);}
+.record-dialog header h2 {font-size:21px;margin:5px 0 0;}.record-dialog .eyebrow {font-size:12px;margin:0;}
+.record-dialog form {display:flex;flex-direction:column;gap:18px;padding:24px 26px;}
+.record-dialog label {font-size:13px;color:var(--muted);line-height:1.7;}
+.record-dialog input:not([type=checkbox]),.record-dialog select {display:block;width:100%;border:1px solid var(--line);background:white;border-radius:7px;color:var(--ink);font:inherit;padding:9px 11px;min-height:42px;margin-top:6px;}
+.record-dialog textarea {display:block;width:100%;margin-top:6px;font-size:16px;line-height:1.65;}
+.record-fields {display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+.record-more {border-top:1px solid var(--line);padding-top:12px;}.record-more summary {font-size:13px;color:var(--purple);cursor:pointer;}.record-more label {display:block;margin-top:14px;}
+.record-dialog .processing-choice {margin:0;font-size:12px;}.record-footer {display:flex;align-items:center;justify-content:space-between;gap:18px;}.record-footer>span {font-size:12px;color:var(--muted);}.record-footer button {display:flex;align-items:center;gap:8px;}
+.form-error {padding:10px 12px;background:#fff3f4;color:#9b2943;border-radius:6px;font-size:13px;line-height:1.7;margin:0;}
+@media(max-width:600px) {.record-dialog {max-height:94dvh;}.record-dialog header {padding:18px 20px;}.record-dialog form {padding:20px;}.record-fields {grid-template-columns:1fr;gap:12px;}.record-footer {align-items:flex-start;flex-direction:column;gap:10px;}.record-footer button {align-self:flex-end;}}
+.record-discard {margin:0 24px 14px;padding:12px 16px;border:1px solid var(--line);border-radius:10px;background:var(--purple-wash,#f6f2fb);}
+.record-discard p {margin:0 0 8px;font-size:14px;}
+.record-discard>div {display:flex;flex-wrap:wrap;gap:10px;}
