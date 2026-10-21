@@ -1,3 +1,4 @@
+import {ObservationLink} from './ObservationLink.jsx';
 import {useEffect, useState} from 'react';
 import {IconArrowRight, IconCheck, IconPlus, IconCompass, IconNotes} from '@tabler/icons-react';
 import './lifecycle.css';
@@ -40,6 +41,9 @@ export function LifecyclePlanner({project,onAction,busy,aiConfigured,onMaterials
   const [editing,setEditing]=useState(!ready),[recording,setRecording]=useState(false),[error,setError]=useState(''),[view,setView]=useState(null);
   const [dirty,setDirty]=useState({});
   const [recordVersion,setRecordVersion]=useState(0);
+  const [linkEditor,setLinkEditor]=useState(null);
+  function closeLink(){if(dirty.link&&!window.confirm('阶段记录尚未保存，放弃这些修改？'))return;setLinkEditor(null);mark('link',false);}
+  function openLink(id=''){if(dirty.link&&!window.confirm('阶段记录尚未保存，放弃这些修改？'))return;setLinkEditor({id});mark('link',false);}
   const hasDraft=Object.values(dirty).some(Boolean);
   const mark=(key,value)=>setDirty(current=>({...current,[key]:value}));
   useEffect(()=>{onDraftChange?.(hasDraft);},[hasDraft,onDraftChange]);
@@ -65,10 +69,11 @@ export function LifecyclePlanner({project,onAction,busy,aiConfigured,onMaterials
     <div hidden={section!=="actions"}>
       {!ready&&<p className="compact-note">可以先安排实践任务；在实践指导中保存问题后，可记录关联发现。</p>}
       {ready&&<>
-      <div className="practice-record-heading"><h3>实际发现了什么</h3><button className="text-button" disabled={busy} onClick={()=>setRecording(!recording)}><IconNotes size={16}/>{recording?'收起记录':'记下实际发现'}</button></div>
+      <div className="practice-record-heading"><h3>实际发现了什么</h3><div className="observation-actions"><button className="text-button" disabled={busy||!project.materials.length} onClick={()=>openLink()}>关联已有材料</button><button className="text-button" disabled={busy} onClick={()=>setRecording(!recording)}><IconNotes size={16}/>{recording?'收起记录':'记下实际发现'}</button></div></div>
       <div hidden={!recording} onChangeCapture={()=>mark('record',true)}><ObservationForm key={recordVersion} project={project} busy={busy} onSubmit={async observation=>{if(await act('practice_observation',{observation})){mark('record',false);setRecording(false);setRecordVersion(v=>v+1);}}}/></div>
+      {linkEditor&&<ObservationLink key={linkEditor.id||'new'} project={project} observation={s.observations.find(o=>o.id===linkEditor.id)} changed={view?.changed_observations?.includes(linkEditor.id)} busy={busy||!view} onDirty={value=>mark('link',value)} onCancel={closeLink} onSave={async observation=>{if(await act(linkEditor.id?'practice_edit_observation':'practice_link_material',{observation,...(linkEditor.id?{observation_id:linkEditor.id}:{})})){setLinkEditor(null);mark('link',false);}}}/>}
       {!s.observations.length&&!recording&&<p className="compact-note">保留实际经历、不同反馈和仍不确定的地方，指导会随记录更新。</p>}
-      {s.observations.length>0&&<details className="practice-findings"><summary>查看 {s.observations.length} 条阶段记录</summary>{s.observations.map(o=><article key={o.id}><strong>{s.questions.find(q=>q.id===o.question_id)?.text}</strong><p>{o.finding||'尚未整理阶段发现。'}</p>{view?.changed_observations?.includes(o.id)&&<p className="practice-stale">关联材料已修改，阶段发现需重新核对。</p>}{o.uncertainty&&<p className="subtle">仍不确定：{o.uncertainty}</p>}<small>{project.materials.some(m=>m.id===o.material_id)?'原始记录保存在实践材料':'关联材料已移除，保留此处的记录备注。'}</small></article>)}<button className="text-button" onClick={onMaterials}>查看材料与来源 <IconArrowRight size={15}/></button></details>}
+      {s.observations.length>0&&<details className="practice-findings"><summary>查看 {s.observations.length} 条阶段记录</summary>{s.observations.map(o=><article key={o.id}><strong>{s.questions.find(q=>q.id===o.question_id)?.text}</strong><p>{o.finding||'尚未整理阶段发现。'}</p>{view?.changed_observations?.includes(o.id)&&<p className="practice-stale">关联材料已修改，阶段发现需重新核对。</p>}{o.uncertainty&&<p className="subtle">仍不确定：{o.uncertainty}</p>}<small>{project.materials.some(m=>m.id===o.material_id)?'原始记录保存在实践材料':'关联材料已移除，保留此处的记录备注。'}</small><button className="text-button" disabled={busy} onClick={()=>openLink(o.id)}>编辑阶段记录</button></article>)}<button className="text-button" onClick={onMaterials}>查看材料与来源 <IconArrowRight size={15}/></button></details>}
       <div className="practice-report-bridge"><div><strong>把实践接到报告</strong><p>按问题整理纳入的记录与团队发现，保留待撰写的结论和限制。</p></div><button className="secondary" disabled={busy||!!project.report.text.trim()||!!project.manual_text} onClick={()=>act('practice_report')}>{project.report.text.trim()?'报告已准备，可在项目概览核对':'整理为报告初稿'}</button></div>
 
     </>}

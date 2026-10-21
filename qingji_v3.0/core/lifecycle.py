@@ -206,6 +206,56 @@ def add_observation(store, ident, version, item, actor=''):
             p['needs_review']=True
     return store.update(ident,version,mutate,actor=actor,action='practice_observed',detail='保存实际记录与阶段发现')
 
+def save_observation_link(store, ident, version, item, observation_id=None, actor=''):
+    """Link existing evidence or edit its interpretation without rewriting evidence."""
+    allowed = {'material_id', 'question_id', 'task_id', 'finding', 'uncertainty', 'source_reviewed'}
+    if not isinstance(item, dict) or set(item) - allowed:
+        raise ReviewError('阶段记录字段无效。')
+    if observation_id is not None:
+        observation_id = txt(observation_id, '阶段记录标识', 80, True)
+    if 'source_reviewed' in item and type(item['source_reviewed']) is not bool:
+        raise ReviewError('原文核对状态无效。')
+    def mutate(p):
+        if p.get('archived'):
+            raise ReviewError('已归档项目需要恢复后再编辑。')
+        s = state_of(p)
+        old = next((o for o in s['observations'] if o['id'] == observation_id), None)
+        if observation_id is not None and old is None:
+            raise ReviewError('找不到这条阶段记录。')
+        qid = txt(item.get('question_id'), '关联问题', 80, True)
+        task_id = txt(item.get('task_id', ''), '对应行动', 80)
+        if qid not in {q['id'] for q in s['questions']}:
+            raise ReviewError('请选择当前实践问题。')
+        if task_id and (s['task_links'].get(task_id) != qid or not any(t['id'] == task_id for t in p['tasks'])):
+            raise ReviewError('行动不属于这个实践问题。')
+        mid = txt(item.get('material_id'), '关联材料', 80, True)
+        if old and mid != old['material_id']:
+            raise ReviewError('不能替换阶段记录的原始来源，请另建关联。')
+        material = next((m for m in p['materials'] if m['id'] == mid), None)
+        if not material and (not old or item.get('source_reviewed')):
+            raise ReviewError('关联材料已移除，不能确认原文；请先补充材料。')
+        if any(o['material_id'] == mid and o['question_id'] == qid and o['id'] != observation_id for o in s['observations']):
+            raise ReviewError('这份材料已经关联该问题，请编辑已有阶段记录。')
+        finding = txt(item.get('finding', ''), '阶段发现', 2000)
+        uncertainty = txt(item.get('uncertainty', ''), '尚未弄清楚', 2000)
+        if old:
+            old.update(question_id=qid, task_id=task_id, finding=finding, uncertainty=uncertainty)
+            # Merely editing a note does not silently clear the changed-source warning.
+            if item.get('source_reviewed'):
+                old['source_fingerprint'] = source_fingerprint(material)
+        else:
+            if len(s['observations']) >= 100:
+                raise ReviewError('实践记录已达到上限。')
+            s['observations'].append({'id': 'o' + uuid.uuid4().hex, 'question_id': qid,
+                'task_id': task_id, 'material_id': mid, 'finding': finding,
+                'uncertainty': uncertainty, 'created_at': stamp(),
+                'source_fingerprint': source_fingerprint(material)})
+        p['lifecycle'] = s
+    return store.update(ident, version, mutate, actor=actor,
+        action='practice_observation_updated' if observation_id else 'practice_material_linked',
+        detail='更新阶段发现与问题关联' if observation_id else '将已有材料关联实践问题')
+
+
 def report_outline(project):
     s=state_of(project); checked_brief(s['brief']); checked_questions(s['questions'])
     eligible={m['id']:m for m in project['materials'] if m['enabled'] and m['consent_status']=='confirmed'}
