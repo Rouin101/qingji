@@ -200,7 +200,7 @@ def project_action(body):
         if not isinstance(changes,dict):
             raise ReviewError("保存内容不完整。")
         return STORE.save(project_id,version,changes,actor=actor)
-    if action in {"practice_brief","practice_guidance","practice_adopt","practice_observation","practice_report"}:
+    if action in {"practice_brief","practice_guidance","practice_adopt","practice_observation","practice_report","practice_link_material","practice_edit_observation"}:
         from core import lifecycle
         p=STORE.get(project_id)
         if type(version) is not int or version!=p['version']:
@@ -210,6 +210,11 @@ def project_action(body):
             return lifecycle.save_brief(STORE,project_id,version,body.get('brief'),body.get('questions'),body.get('stage'),actor)
         if action=='practice_observation':
             return lifecycle.add_observation(STORE,project_id,version,body.get('observation'),actor)
+        if action in {'practice_link_material', 'practice_edit_observation'}:
+            observation_id = body.get('observation_id') if action == 'practice_edit_observation' else None
+            if action == 'practice_edit_observation' and not observation_id:
+                raise ReviewError('请选择要编辑的阶段记录。')
+            return lifecycle.save_observation_link(STORE,project_id,version,body.get('observation'),observation_id,actor)
         if action=='practice_adopt':
             return lifecycle.adopt_action(STORE,project_id,version,body.get('guidance_id'),body.get('action_id'),body.get('action_text'),actor)
         if action=='practice_report':
