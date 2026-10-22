@@ -236,7 +236,7 @@ def project_action(body):
         return STORE.task_detail(project_id,version,body.get("task_id"),body.get("changes"),actor=actor)
     if action=="create_task":
         return STORE.create_task(project_id,version,body.get("action_text"),
-            assignee_id=body.get("assignee_id",""),due_date=body.get("due_date",""),notes=body.get("notes",""),actor=actor)
+            assignee_id=body.get("assignee_id",""),due_date=body.get("due_date",""),notes=body.get("notes",""),actor=actor,question_id=body.get("question_id",""))
     if action=="comment":
         return STORE.comment(project_id,version,body.get("target_type"),body.get("target_id",""),body.get("body"),actor=actor)
     if action=="archive":

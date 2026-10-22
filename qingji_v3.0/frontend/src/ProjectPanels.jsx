@@ -70,7 +70,7 @@ function CreatePracticeTask({project, onCreateTask, busy}) {
     setSaving(true);
     setError("");
     try {
-      await onCreateTask({kind: "practice", action, assignee_id: fields.get("assignee_id") || "", due_date: fields.get("due_date") || "", notes: fields.get("notes") || ""});
+      await onCreateTask({kind: "practice", action, question_id: fields.get("question_id") || "", assignee_id: fields.get("assignee_id") || "", due_date: fields.get("due_date") || "", notes: fields.get("notes") || ""});
       form.reset();
       form.closest("details").open = false;
     } catch (error) {
@@ -80,7 +80,7 @@ function CreatePracticeTask({project, onCreateTask, busy}) {
       setSaving(false);
     }
   }
-  return <details className="create-task surface-disclosure"><summary><span><IconPlus size={17}/>新建实践任务</span><IconChevronDown size={16}/></summary><form className="create-task-form" onSubmit={create}><label className="task-action-label">要做什么<textarea name="action" rows={2} maxLength={1000} placeholder="如：整理本次访谈的原始记录" required disabled={busy || saving}/></label><label>负责人<select name="assignee_id" aria-label="新任务负责人" disabled={busy || saving}><option value="">未指派</option>{(project.members || []).map(member => <option key={member.id} value={member.id}>{member.name}</option>)}</select></label><label>截止日期<input type="date" name="due_date" disabled={busy || saving}/></label><label className="task-notes-label">备注<textarea name="notes" rows={2} maxLength={3000} disabled={busy || saving}/></label><button className="secondary" disabled={busy || saving}>{saving ? "正在保存…" : "创建任务"}</button>{error && <p className="inline-error" role="alert">{error}</p>}</form></details>;
+  return <details className="create-task surface-disclosure"><summary><span><IconPlus size={17}/>新建实践任务</span><IconChevronDown size={16}/></summary><form className="create-task-form" onSubmit={create}><label className="task-action-label">要做什么<textarea name="action" rows={2} maxLength={1000} placeholder="如：整理本次访谈的原始记录" required disabled={busy || saving}/></label>{project.lifecycle?.questions?.length>0 && <label>关联问题<select name="question_id" aria-label="新任务关联问题" disabled={busy || saving}><option value="">暂不关联问题</option>{project.lifecycle.questions.map(q=><option key={q.id} value={q.id}>{q.text}</option>)}</select></label>}<label>负责人<select name="assignee_id" aria-label="新任务负责人" disabled={busy || saving}><option value="">未指派</option>{(project.members || []).map(member => <option key={member.id} value={member.id}>{member.name}</option>)}</select></label><label>截止日期<input type="date" name="due_date" disabled={busy || saving}/></label><label className="task-notes-label">备注<textarea name="notes" rows={2} maxLength={3000} disabled={busy || saving}/></label><button className="secondary" disabled={busy || saving}>{saving ? "正在保存…" : "创建任务"}</button>{error && <p className="inline-error" role="alert">{error}</p>}</form></details>;
 }
 
 function RevisionDiscussion({comments = [], previous = false}) {

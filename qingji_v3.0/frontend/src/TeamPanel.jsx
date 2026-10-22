@@ -126,6 +126,9 @@ export function TeamPanel({project, onMembers, onComment, actor = "", onActor, b
 export function TaskCard({task, project, labels, onTask, onLocate, onTaskDetail, onComment, busy, hasEdits}) {
   const members = project.members || [];
   const practice = task.kind === "practice";
+  const questions = project.lifecycle?.questions || [];
+  const questionId = project.lifecycle?.task_links?.[task.id] || "";
+  const linkedRecords = (project.lifecycle?.observations || []).filter(o=>o.task_id===task.id);
   const materialIds = task.material_ids || [];
   const materialSignature = materialIds.join("\u0000");
   const missingMaterials = materialIds.filter(id => !project.materials.some(material => material.id === id));
@@ -160,6 +163,7 @@ export function TaskCard({task, project, labels, onTask, onLocate, onTaskDetail,
     setError("");
     try {
       const changes = {assignee_id: form.get("assignee_id") || "", due_date: form.get("due_date") || "", notes: form.get("notes") || ""};
+      if (practice && questions.length && !linkedRecords.length) changes.question_id = form.get("question_id") || "";
       if (!practice && (missingMaterials.length ? replaceMissing : relationsChanged)) changes.material_ids = form.getAll("material_ids");
       await onTaskDetail(task, changes);
     } catch (error) {
@@ -174,6 +178,7 @@ export function TaskCard({task, project, labels, onTask, onLocate, onTaskDetail,
     <header><span className="category-pill">{labels[task.status] || task.status}</span><small>{practice ? "实践任务" : "补证任务"}</small></header>
     {!practice && task.quote && <p className="task-quote">{task.quote}</p>}
     <p className="task-action-copy">{task.action}</p>
+    {practice && questions.length>0 && <p className="task-question-link">{questionId?`实践问题：${questions.find(q=>q.id===questionId)?.text || "待核对"}`:"尚未关联实践问题"}{linkedRecords.length>0 && <span> · {linkedRecords.length} 条阶段记录</span>}</p>}
     <div className="task-meta">
       <span>{memberName(members, task.assignee_id)}</span>
       {task.due_date && <span className={`task-due-date ${isTaskOverdue(task) ? "is-overdue" : ""}`}><IconCalendar size={14}/>{task.due_date} 截止{isTaskOverdue(task) && <span className="task-overdue-tag">已逾期</span>}</span>}
@@ -265,6 +270,7 @@ export function TaskCard({task, project, labels, onTask, onLocate, onTaskDetail,
       <summary>分工与讨论{comments.length > 0 && <span>{comments.length}</span>}</summary>
       <div className="task-detail-body">
         {onTaskDetail && <form className="task-assignment-form" onSubmit={save}>
+          {practice && questions.length>0 && <label className="task-notes-label">关联问题<select key={questionId} name="question_id" aria-label="任务关联问题" defaultValue={questionId} disabled={busy || saving || linkedRecords.length>0}><option value="">暂不关联问题</option>{questions.map(q=><option key={q.id} value={q.id}>{q.text}</option>)}</select>{linkedRecords.length>0 && <small>已有阶段记录关联此行动。如需更换问题，请先在阶段记录中调整对应行动。</small>}</label>}
           <label>负责人
             <select name="assignee_id" aria-label="任务负责人" defaultValue={task.assignee_id || ""} disabled={busy || saving}>
               <option value="">未指派</option>
