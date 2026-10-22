@@ -1,5 +1,5 @@
 import {ObservationLink} from './ObservationLink.jsx';
-import {useEffect, useState} from 'react';
+import {useEffect, useRef, useState} from 'react';
 import {IconArrowRight, IconCheck, IconPlus, IconCompass, IconNotes} from '@tabler/icons-react';
 import './lifecycle.css';
 
@@ -20,14 +20,15 @@ function BriefForm({state,onSave,busy}){
   </form>;
 }
 
-function ObservationForm({project,onSubmit,busy}){
-  const s=project.lifecycle;const [qid,setQid]=useState(s.questions[0].id);
-  return <form className="practice-record-form" onSubmit={e=>{e.preventDefault();const fields=new FormData(e.currentTarget);onSubmit(Object.fromEntries(fields));}}>
-    <div className="practice-form-grid"><label>关联问题<select aria-label="关联问题" name="question_id" value={qid} onChange={e=>setQid(e.target.value)}>{s.questions.map(q=><option key={q.id} value={q.id}>{q.text}</option>)}</select></label><label>对应行动<select aria-label="对应行动" name="task_id" key={qid}><option value="">暂不关联行动</option>{project.tasks.filter(t=>s.task_links[t.id]===qid).map(t=><option key={t.id} value={t.id}>{t.action}</option>)}</select></label></div>
+function ObservationForm({project,onSubmit,busy,initial}){
+  const s=project.lifecycle;const [qid,setQid]=useState(initial?.questionId || s.questions[0].id);
+  const [taskId,setTaskId]=useState(initial?.taskId || "");
+  return <form className="practice-record-form" onSubmit={e=>{e.preventDefault();const fields=new FormData(e.currentTarget);onSubmit(Object.fromEntries(fields));}}><fieldset disabled={busy}>
+    <div className="practice-form-grid"><label>关联问题<select aria-label="关联问题" name="question_id" value={qid} onChange={e=>{setQid(e.target.value);setTaskId("");}}>{s.questions.map(q=><option key={q.id} value={q.id}>{q.text}</option>)}</select></label><label>对应行动<select aria-label="对应行动" name="task_id" value={taskId} onChange={e=>setTaskId(e.target.value)}><option value="">暂不关联行动</option>{project.tasks.filter(t=>s.task_links[t.id]===qid).map(t=><option key={t.id} value={t.id}>{t.action}</option>)}</select></label></div>
     <label>实际留下的原始记录<textarea name="text" rows={4} maxLength={12000} required placeholder="记录实际听到、看到的情况，保留不同反馈。"/></label>
     <div className="practice-form-grid"><label>来源类型<select aria-label="来源类型" name="source_role" defaultValue="受访者陈述">{['待确认','受访者陈述','工作人员说明','现场观察','正式记录','团队分析'].map(r=><option key={r}>{r}</option>)}</select></label><label>采集时间<input name="collected_at" type="date"/></label><label className="wide">对象与场景<input name="context" maxLength={1000} placeholder="如：某社区便民服务点，一次现场访谈"/></label></div>
     <label>团队的阶段发现<textarea name="finding" rows={2} maxLength={2000} placeholder="可以暂时留空，后续结合记录核对。"/></label><label>仍不确定什么<textarea name="uncertainty" rows={2} maxLength={2000} placeholder="哪些人、环节或不同情况还没了解？"/></label>
-    <input type="hidden" name="consent_status" value="confirmed"/><button className="primary" disabled={busy}>保存实际记录</button><p className="compact-note">保存后进入实践材料；行动是否完成由团队另行确认。</p>
+    <input type="hidden" name="consent_status" value="confirmed"/><button className="primary" disabled={busy}>保存实际记录</button><p className="compact-note">保存后进入实践材料；行动是否完成由团队另行确认。</p></fieldset>
   </form>;
 }
 
@@ -36,16 +37,33 @@ function ActionSuggestion({action,guide,onAdopt,disabled,onDirty}){
   return <article className="practice-suggestion"><span className="practice-method">{action.method}</span><textarea aria-label={'行动安排 '+action.id.slice(1)} rows={2} value={text} maxLength={4000} onChange={e=>{setText(e.target.value);onDirty(e.target.value!==action.action);}} disabled={disabled||!!adopted}/><details><summary>为什么建议这样做</summary><p>{action.why}</p><p>执行时留下：{action.record_hint}</p><small>{action.basis_material_ids.length?`参考 ${action.basis_material_ids.length} 份纳入的关联材料`:'尚无关联材料；这是待执行的探索安排。'}</small></details><button className="secondary" disabled={disabled||!!adopted||!text.trim()} onClick={()=>onAdopt(action.id,text)}>{adopted?<><IconCheck size={16}/>已加入行动</>:'加入行动安排'}</button></article>;
 }
 
-export function LifecyclePlanner({project,onAction,busy,aiConfigured,onMaterials,section="guidance",onDraftChange}){
+export function LifecyclePlanner({project,onAction,busy,aiConfigured,onMaterials,section="guidance",onDraftChange,recordRequest}){
   const s=project.lifecycle, ready=!!s?.questions?.length;
   const [editing,setEditing]=useState(!ready),[recording,setRecording]=useState(false),[error,setError]=useState(''),[view,setView]=useState(null);
   const [dirty,setDirty]=useState({});
   const [recordVersion,setRecordVersion]=useState(0);
+  const [recordTarget,setRecordTarget]=useState(null);
+  const recordArea=useRef(null);
+  const [focusRecord,setFocusRecord]=useState(0);
   const [linkEditor,setLinkEditor]=useState(null);
   function closeLink(){if(dirty.link&&!window.confirm('阶段记录尚未保存，放弃这些修改？'))return;setLinkEditor(null);mark('link',false);}
   function openLink(id=''){if(dirty.link&&!window.confirm('阶段记录尚未保存，放弃这些修改？'))return;setLinkEditor({id});mark('link',false);}
   const hasDraft=Object.values(dirty).some(Boolean);
   const mark=(key,value)=>setDirty(current=>({...current,[key]:value}));
+  useEffect(()=>{
+    if(!recordRequest)return;
+    const task=project.tasks.find(t=>t.id===recordRequest.taskId && t.kind==='practice');
+    const questionId=s?.task_links?.[task?.id];
+    if(!task || !questionId || busy)return;
+    if(dirty.record && recordTarget?.taskId!==task.id && !window.confirm('当前实际记录尚未保存。放弃这份草稿，改记另一项行动？'))return;
+    if(!dirty.record || recordTarget?.taskId!==task.id){setRecordTarget({taskId:task.id,questionId});setRecordVersion(v=>v+1);mark('record',false);}
+    setRecording(true);setFocusRecord(v=>v+1);
+  },[recordRequest]);
+  useEffect(()=>{
+    if(!focusRecord || !recording)return;
+    const id=requestAnimationFrame(()=>{const input=recordArea.current?.querySelector('textarea[name="text"]');input?.focus({preventScroll:true});input?.scrollIntoView({block:'center',behavior:'auto'});});
+    return()=>cancelAnimationFrame(id);
+  },[focusRecord,recording]);
   useEffect(()=>{onDraftChange?.(hasDraft);},[hasDraft,onDraftChange]);
   useEffect(()=>()=>onDraftChange?.(false),[onDraftChange]);
   useEffect(()=>{if(!hasDraft)return;const warn=e=>{e.preventDefault();e.returnValue='';};window.addEventListener('beforeunload',warn);return()=>window.removeEventListener('beforeunload',warn);},[hasDraft]);
@@ -70,7 +88,7 @@ export function LifecyclePlanner({project,onAction,busy,aiConfigured,onMaterials
       {!ready&&<p className="compact-note">可以先安排实践任务；在实践指导中保存问题后，可记录关联发现。</p>}
       {ready&&<>
       <div className="practice-record-heading"><h3>实际发现了什么</h3><div className="observation-actions"><button className="text-button" disabled={busy||!project.materials.length} onClick={()=>openLink()}>关联已有材料</button><button className="text-button" disabled={busy} onClick={()=>setRecording(!recording)}><IconNotes size={16}/>{recording?'收起记录':'记下实际发现'}</button></div></div>
-      <div hidden={!recording} onChangeCapture={()=>mark('record',true)}><ObservationForm key={recordVersion} project={project} busy={busy} onSubmit={async observation=>{if(await act('practice_observation',{observation})){mark('record',false);setRecording(false);setRecordVersion(v=>v+1);}}}/></div>
+      <div ref={recordArea} hidden={!recording} onChangeCapture={()=>mark('record',true)}><ObservationForm key={recordVersion} initial={recordTarget} project={project} busy={busy} onSubmit={async observation=>{if(await act('practice_observation',{observation})){mark('record',false);setRecording(false);setRecordTarget(null);setRecordVersion(v=>v+1);}}}/></div>
       {linkEditor&&<ObservationLink key={linkEditor.id||'new'} project={project} observation={s.observations.find(o=>o.id===linkEditor.id)} changed={view?.changed_observations?.includes(linkEditor.id)} busy={busy||!view} onDirty={value=>mark('link',value)} onCancel={closeLink} onSave={async observation=>{if(await act(linkEditor.id?'practice_edit_observation':'practice_link_material',{observation,...(linkEditor.id?{observation_id:linkEditor.id}:{})})){setLinkEditor(null);mark('link',false);}}}/>}
       {!s.observations.length&&!recording&&<p className="compact-note">保留实际经历、不同反馈和仍不确定的地方，指导会随记录更新。</p>}
       {s.observations.length>0&&<details className="practice-findings"><summary>查看 {s.observations.length} 条阶段记录</summary>{s.observations.map(o=><article key={o.id}><strong>{s.questions.find(q=>q.id===o.question_id)?.text}</strong><p>{o.finding||'尚未整理阶段发现。'}</p>{view?.changed_observations?.includes(o.id)&&<p className="practice-stale">关联材料已修改，阶段发现需重新核对。</p>}{o.uncertainty&&<p className="subtle">仍不确定：{o.uncertainty}</p>}<small>{project.materials.some(m=>m.id===o.material_id)?'原始记录保存在实践材料':'关联材料已移除，保留此处的记录备注。'}</small><button className="text-button" disabled={busy} onClick={()=>openLink(o.id)}>编辑阶段记录</button></article>)}<button className="text-button" onClick={onMaterials}>查看材料与来源 <IconArrowRight size={15}/></button></details>}
