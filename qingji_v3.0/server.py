@@ -309,12 +309,21 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {"ai_configured": ai_configured(), "app": "qingji-v3", "formats": ["docx", "pdf", "txt", "md"]})
         if route == "/api/example":
             return self._json(200, example_result())
-        if route in {"/api/projects", "/api/project", "/api/revision", "/api/package", "/api/delivery", "/api/practice"}:
+        if route in {"/api/projects", "/api/project", "/api/revision", "/api/package", "/api/delivery", "/api/practice", "/api/practice-report"}:
             try:
                 args=parse_qs(urlsplit(self.path).query)
                 if route=="/api/projects":
                     return self._json(200,{"projects":STORE.list()})
                 project_id=args.get("id",[""])[0]
+                if route=='/api/practice-report':
+                    from core.lifecycle import report_outline
+                    expected=args.get('version',[''])[0]
+                    if not expected.isascii() or not expected.isdecimal() or len(expected)>12:
+                        return self._json(400,{'error':'请先保存项目，再整理记录。'})
+                    p=STORE.get(project_id)
+                    if int(expected)!=p['version']:
+                        return self._json(409,{'error':'项目已在其他窗口更新，请刷新项目后重新整理。'})
+                    return self._json(200,{'version':p['version'],'text':report_outline(p)})
                 if route=='/api/practice':
                     from core.lifecycle import practice_view
                     return self._json(200,practice_view(STORE.get(project_id)))
