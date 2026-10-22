@@ -824,7 +824,7 @@ export function App() {
         allowAI={allowAI} aiConfigured={status?.ai_configured} busy={busy} actor={actorId} onActor={setActor} hasEdits={hasEdits||editing}
         onMembers={members=>teamAction("members",{members},"成员分工已保存")}
         onTaskDetail={(task,changes)=>teamAction("task_detail",{task_id:task.id,changes},"任务分工已保存")}
-        onCreateTask={task=>teamAction("create_task",{action_text:task.action,assignee_id:task.assignee_id,due_date:task.due_date,notes:task.notes},"实践任务已建立")}
+        onCreateTask={task=>teamAction("create_task",{question_id:task.question_id||"",action_text:task.action,assignee_id:task.assignee_id,due_date:task.due_date,notes:task.notes},"实践任务已建立")}
         onComment={values=>teamAction("comment",values,"讨论已记录")}
         onArchive={value=>archiveProject(project.id,value)} onPackage={exportPackage}/>
       : <>

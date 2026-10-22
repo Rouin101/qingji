@@ -206,6 +206,25 @@ def add_observation(store, ident, version, item, actor=''):
             p['needs_review']=True
     return store.update(ident,version,mutate,actor=actor,action='practice_observed',detail='保存实际记录与阶段发现')
 
+def assign_task_question(project, task, question_id):
+    """Assign a practice task without silently moving its existing observations."""
+    qid = txt(question_id, '关联问题', 80)
+    if task['kind'] != 'practice':
+        raise ReviewError('补证任务保持原结论关联，不能改为实践问题。')
+    s = state_of(project)
+    if qid and qid not in {q['id'] for q in s['questions']}:
+        raise ReviewError('请选择当前项目的实践问题。')
+    if s['task_links'].get(task['id'], '') == qid:
+        return
+    if any(o['task_id'] == task['id'] for o in s['observations']):
+        raise ReviewError('该行动已有阶段记录，请先在阶段记录中调整对应行动，再修改任务的问题关联。')
+    if qid:
+        s['task_links'][task['id']] = qid
+    else:
+        s['task_links'].pop(task['id'], None)
+    project['lifecycle'] = s
+
+
 def save_observation_link(store, ident, version, item, observation_id=None, actor=''):
     """Link existing evidence or edit its interpretation without rewriting evidence."""
     allowed = {'material_id', 'question_id', 'task_id', 'finding', 'uncertainty', 'source_reviewed'}

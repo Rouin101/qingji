@@ -289,12 +289,15 @@ class ProjectStore:
         return self.update(project_id,version,mutate,actor=actor,action="members",detail="更新成员与实践分工")
 
     def task_detail(self, project_id, version, task_id, changes, actor=""):
-        if not isinstance(changes,dict) or any(k not in {"action","assignee_id","due_date","notes","material_ids"} for k in changes):
+        if not isinstance(changes,dict) or any(k not in {"action","assignee_id","due_date","notes","material_ids","question_id"} for k in changes):
             raise ReviewError("任务修改内容无效。")
         def mutate(p):
             task=next((t for t in p["tasks"] if t["id"]==task_id),None)
             if not task:
                 raise ReviewError("找不到这个项目中的任务。")
+            if "question_id" in changes:
+                from core.lifecycle import assign_task_question
+                assign_task_question(p,task,changes['question_id'])
             if "action" in changes:
                 task["action"]=short_text(changes["action"],"任务内容",1000,True)
             if "assignee_id" in changes:
@@ -325,7 +328,7 @@ class ProjectStore:
                                     f"调整补证材料：{before} → {describe(mids)}；待整篇复查和作者确认。")
         return self.update(project_id,version,mutate,actor=actor,action="task_detail",detail="更新任务分工、日期或记录")
 
-    def create_task(self, project_id, version, action, assignee_id="", due_date="", notes="", actor=""):
+    def create_task(self, project_id, version, action, assignee_id="", due_date="", notes="", actor="", question_id=""):
         from core.collaboration import due_date as validate_due_date
         def mutate(p):
             if len(p["tasks"])>=MAX_TASKS:
@@ -334,6 +337,8 @@ class ProjectStore:
                                "assignee_id":assignee(p,assignee_id),"due_date":validate_due_date(due_date),
                                "notes":short_text(notes,"任务记录",3000),"status":"open","created_at":now(),
                                "quote":"","category":"实践任务","material_ids":[]})
+            from core.lifecycle import assign_task_question
+            assign_task_question(p,p['tasks'][-1],question_id)
         return self.update(project_id,version,mutate,actor=actor,action="task_created",detail="新建实践任务")
 
     def comment(self, project_id, version, target_type, target_id, body, actor=""):
