@@ -123,7 +123,7 @@ export function TeamPanel({project, onMembers, onComment, actor = "", onActor, b
   </details>;
 }
 
-export function TaskCard({task, project, labels, onTask, onLocate, onTaskDetail, onComment, busy, hasEdits, onRecord}) {
+export function TaskCard({task, project, labels, onTask, onLocate, onTaskDetail, onComment, busy, hasEdits, onRecord, onViewRecords}) {
   const members = project.members || [];
   const practice = task.kind === "practice";
   const questions = project.lifecycle?.questions || [];
@@ -185,6 +185,7 @@ export function TaskCard({task, project, labels, onTask, onLocate, onTaskDetail,
       {!practice && <span>{materialIds.length ? `已关联 ${materialIds.length} 份材料` : "待关联材料"}</span>}
     </div>
     {practice && questionId && onRecord && <button className="text-button task-record-button" disabled={busy || project.archived} onClick={()=>onRecord(task)}>记下这项行动的发现</button>}
+    {practice && linkedRecords.length>0 && onViewRecords && <button className="text-button task-record-button" disabled={busy} onClick={()=>onViewRecords(task)}>查看这项行动的记录</button>}
     {!practice && residentHint && <div className="task-resident-hint"><IconFileCheck size={14} stroke={1.5}/><span>{residentHint}</span></div>}
     {!practice && <details className="task-review-feedback">
       <summary>查看本次核对</summary>
