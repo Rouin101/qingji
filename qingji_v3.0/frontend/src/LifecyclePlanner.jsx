@@ -1,3 +1,4 @@
+import {PracticeReport} from './PracticeReport.jsx';
 import {PracticeFindings} from './PracticeFindings.jsx';
 import {ObservationLink} from './ObservationLink.jsx';
 import {useEffect, useRef, useState} from 'react';
@@ -93,7 +94,7 @@ export function LifecyclePlanner({project,onAction,busy,aiConfigured,onMaterials
       {linkEditor&&<ObservationLink key={linkEditor.id||'new'} project={project} observation={s.observations.find(o=>o.id===linkEditor.id)} changed={view?.changed_observations?.includes(linkEditor.id)} busy={busy||!view} onDirty={value=>mark('link',value)} onCancel={closeLink} onSave={async observation=>{if(await act(linkEditor.id?'practice_edit_observation':'practice_link_material',{observation,...(linkEditor.id?{observation_id:linkEditor.id}:{})})){setLinkEditor(null);mark('link',false);}}}/>}
       {!s.observations.length&&!recording&&<p className="compact-note">保留实际经历、不同反馈和仍不确定的地方，指导会随记录更新。</p>}
       {s.observations.length>0&&<PracticeFindings project={project} view={view} busy={busy} onEdit={openLink} onMaterials={onMaterials} request={findingsRequest}/>}
-      <div className="practice-report-bridge"><div><strong>把实践接到报告</strong><p>按问题整理纳入的记录与团队发现，保留待撰写的结论和限制。</p></div><button className="secondary" disabled={busy||!!project.report.text.trim()||!!project.manual_text} onClick={()=>act('practice_report')}>{project.report.text.trim()?'报告已准备，可在项目概览核对':'整理为报告初稿'}</button></div>
+      <PracticeReport project={project} busy={busy} hasDraft={hasDraft} onCreate={()=>act('practice_report')}/>
 
     </>}
     </div>
