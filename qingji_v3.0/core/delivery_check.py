@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from core.collaboration import pending_author_edits
+from core.lifecycle import source_fingerprint
 
 SUPPORT_LABELS = {"supported":"有对应依据", "partial":"支持较窄表述", "unsupported":"依据不足",
                   "disagreement":"存在不同情况", "pending":"待结合依据核对"}
@@ -34,6 +35,23 @@ def delivery_check(project):
               "missing_ids":[mid for mid in t.get("material_ids", []) if mid not in material_ids]}
              for t in project.get("tasks", []) if t.get("kind") == "evidence"
              and any(mid not in material_ids for mid in t.get("material_ids", []))]
+    state = project.get('lifecycle') or {}
+    sources = {m['id']:m for m in materials}
+    questions = {q['id']:q['text'] for q in state.get('questions', [])}
+    observation_items = []
+    for observation in state.get('observations', []):
+        source = sources.get(observation['material_id'])
+        missing = source is None
+        if not missing and observation['source_fingerprint'] == source_fingerprint(source):
+            continue
+        detail = ('关联材料已移除，仅保留记录备注，不能据此还原原文。' if missing else
+                  '关联来源已修改，请对照当前原文重新核对阶段发现。')
+        if source and not source.get('enabled'):
+            detail += '材料已排除；核对记录不会自动将其纳入。'
+        observation_items.append({'observation_id':observation['id'],
+            'material_id':observation['material_id'], 'reason':'missing' if missing else 'changed',
+            'label':questions.get(observation['question_id'], '阶段记录') +
+                    (' · '+source['name'] if source else ''), 'detail':detail})
     review_items = []
     if not (project.get("report") or {}).get("text", "").strip():
         review_items.append({"label":"还没有报告正文", "target":"project"})
@@ -61,6 +79,7 @@ def delivery_check(project):
         {"id":"links", "title":"需要更新的材料关联", "target":"project", "items":[
             {"task_id":l["task_id"], "label":l["action"], "detail":f"{len(l['missing_ids'])}份旧材料已移除，请明确选择当前材料。"}
             for l in links]},
+        {"id":"observations", "title":"需要核对来源的阶段记录", "target":"practice-records", "items":observation_items},
     ]
     support_counts = {status:sum(i.get("support_status", "pending") == status for i in issues) for status in SUPPORT_LABELS}
     return {"project_id":project["id"], "project_name":project["name"], "version":project["version"],
@@ -75,7 +94,8 @@ def delivery_check(project):
                          "unconfirmed_included":len(pending), "excluded":len(excluded)},
             "counts":{"undecided_claims":len(undecided), "open_practice_tasks":sum(t.get("kind") == "practice" for t in open_tasks),
                       "open_evidence_tasks":sum(t.get("kind") == "evidence" for t in open_tasks),
-                      "missing_material_links":len(links), "attention_items":sum(len(s["items"]) for s in sections)},
+                      "missing_material_links":len(links), "observation_source_items":len(observation_items),
+                      "attention_items":sum(len(s["items"]) for s in sections)},
             "sections":sections}
 
 
