@@ -364,6 +364,12 @@ export function App() {
   }
 
   async function navigate(destination) {
+    if(destination==="practice-records"){
+      if(busy||operationRef.current||!projectRef.current)return;
+      if(screen!=="project"&&!mayLeavePractice())return;
+      try{await flushEdits();setReportRequest({id:projectRef.current.id,section:"actions",sequence:Date.now()});setScreen("project");}
+      catch(e){setError(e.message);}return;
+    }
     if(destination!==screen&&!mayLeavePractice())return;
     if(busy||operationRef.current)return;
     if (!projectRef.current) return goHome();

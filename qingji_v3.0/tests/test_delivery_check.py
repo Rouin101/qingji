@@ -94,3 +94,43 @@ class DeliveryCheckTests(unittest.TestCase):
         before=copy.deepcopy(p);c=delivery_check(p)
         self.assertEqual(p,before)
         self.assertNotIn('synthetic-secret-marker',str(c)+delivery_markdown(c))
+
+
+class ObservationDeliveryTests(unittest.TestCase):
+    def sample(self):
+        from core.lifecycle import source_fingerprint
+        p=project();p['materials'][0].update(text='虚构原文',source_role='现场观察',context='虚构场景',collected_at='')
+        p['lifecycle']={'questions':[{'id':'q1','text':'实际遇到了什么？'}], 'observations':[
+            {'id':'o1','question_id':'q1','material_id':'m1','source_fingerprint':source_fingerprint(p['materials'][0]),'finding':'不应整段导出的团队备注'}]}
+        return p
+
+    def section(self,p):
+        return next(s for s in delivery_check(p)['sections'] if s['id']=='observations')
+
+    def test_unchanged_and_explicit_exclusion_do_not_create_source_warning(self):
+        p=self.sample();self.assertEqual(self.section(p)['items'],[])
+        p['materials'][0]['enabled']=False
+        self.assertEqual(self.section(p)['items'],[])
+
+    def test_changed_source_is_read_only_and_separate_from_review_grade(self):
+        p=self.sample();p['materials'][0]['context']='不同场景'
+        before=copy.deepcopy(p);c=delivery_check(p);items=self.section(p)['items']
+        self.assertEqual(items[0]['reason'],'changed');self.assertEqual(items[0]['observation_id'],'o1')
+        self.assertEqual(c['counts']['observation_source_items'],1)
+        self.assertTrue(c['review']['current']);self.assertEqual(p,before)
+        self.assertIn('需要核对来源的阶段记录',delivery_markdown(c))
+        self.assertNotIn('不应整段导出的团队备注',delivery_markdown(c))
+
+    def test_missing_source_and_changed_excluded_source_remain_explicit(self):
+        p=self.sample();p['materials'][0].update(text='新原文',enabled=False)
+        self.assertIn('已排除',self.section(p)['items'][0]['detail'])
+        p['materials']=[];item=self.section(p)['items'][0]
+        self.assertEqual(item['reason'],'missing');self.assertIn('不能据此还原',item['detail'])
+        self.assertEqual(self.section(p)['target'],'practice-records')
+
+    def test_confirming_current_source_clears_only_source_warning(self):
+        from core.lifecycle import source_fingerprint
+        p=self.sample();p['materials'][0]['text']='新原文'
+        p['lifecycle']['observations'][0]['source_fingerprint']=source_fingerprint(p['materials'][0])
+        c=delivery_check(p);self.assertEqual(c['counts']['observation_source_items'],0)
+        self.assertEqual(c['review']['support_counts']['unsupported'],1)

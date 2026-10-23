@@ -102,7 +102,7 @@ export function ProjectOverview({project, result, onSave, onUpload, onReview, on
   useEffect(()=>{onDraftChange?.(reportDirty||lifecycleDirty);},[reportDirty,lifecycleDirty,onDraftChange]);
   useEffect(()=>()=>onDraftChange?.(false),[onDraftChange]);
   const [section, setSection] = useState(project.lifecycle?.questions?.length || project.report.text ? "overview" : "guidance");
-  useEffect(()=>{if(reportRequest?.id===project.id)setSection("overview");},[reportRequest,project.id]);
+  useEffect(()=>{if(reportRequest?.id===project.id){setSection(reportRequest.section||"overview");if(reportRequest.section==="actions")setFindingsRequest({taskId:"",sequence:reportRequest.sequence});}},[reportRequest,project.id]);
   const [findingsRequest,setFindingsRequest] = useState(null);
   const viewTaskRecords = task => {setSection("actions");setFindingsRequest({taskId:task.id,sequence:Date.now()});};
   const [recordRequest,setRecordRequest] = useState(null);
