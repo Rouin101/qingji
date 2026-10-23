@@ -47,7 +47,7 @@ async function readFile(file) {
 export function App() {
   const [reportRequest,setReportRequest] = useState(null);
   const [practiceDraft, setPracticeDraft] = useState(false);
-  const mayLeavePractice = () => !practiceDraft || window.confirm("还有未保存的实践输入。离开将丢失这些输入，确定离开？");
+  const mayLeavePractice = () => !practiceDraft || window.confirm("还有未保存的报告或实践内容。离开将丢失这些输入，确定离开？");
   const [screen, setScreen] = useState("home");
   const [project, setProject] = useState(null);
   const [projects, setProjects] = useState([]);
@@ -818,7 +818,7 @@ export function App() {
         onSave={()=>saveDetails({materials})} onUpload={()=>materialsInput.current?.click()} onQuickRecord={()=>openQuickRecord()} onEdit={openQuickRecord} onRemove={removeMaterial}
         onPreview={m=>setCitation({document_id:m.id,start:0,end:0,quote:"",live:true})} onPreviewCitation={c=>setCitation({...c,live:false})} onLocateIssue={locateIssue} onReview={()=>navigate("review")} onRecheck={()=>recheck(true)}
         hasReport={!!report?.text?.trim()} allowAI={allowAI} aiConfigured={status?.ai_configured} busy={busy} needsReview={project.needs_review}/>
-      : <ProjectOverview key={project.id} reportRequest={reportRequest} onDraftChange={setPracticeDraft} hasPracticeDraft={practiceDraft} onPractice={async(action, values)=>{const p=await teamAction(action,values,"实践进展已保存");acceptProject(p,"project",{preserveTab:true});return p;}} project={project} result={result} onSave={saveDetails} onUpload={()=>reportInput.current?.click()} onReview={()=>navigate("review")}
+      : <ProjectOverview currentReport={currentReport} key={project.id} reportRequest={reportRequest} onDraftChange={setPracticeDraft} hasPracticeDraft={practiceDraft} onPractice={async(action, values)=>{const p=await teamAction(action,values,"实践进展已保存");acceptProject(p,"project",{preserveTab:true});return p;}} project={project} result={result} onSave={saveDetails} onUpload={()=>reportInput.current?.click()} onReview={()=>navigate("review")}
         deliveryCheck={<DeliveryCheck version={project.version} hasEdits={editing||JSON.stringify(workingState())!==savedState.current} busy={busy} onCheck={loadDeliveryCheck} onNavigate={navigate}/>}
         onMaterials={()=>navigate("materials")} onQuickRecord={()=>openQuickRecord()} onRecheck={()=>recheck(true)} onTask={taskAction} onLocate={locateTask} onRevision={showRevision} revision={revision} revisionLoading={revisionLoading}
         allowAI={allowAI} aiConfigured={status?.ai_configured} busy={busy} actor={actorId} onActor={setActor} hasEdits={hasEdits||editing}
