@@ -39,7 +39,7 @@ function ActionSuggestion({action,guide,onAdopt,disabled,onDirty}){
   return <article className="practice-suggestion"><span className="practice-method">{action.method}</span><textarea aria-label={'行动安排 '+action.id.slice(1)} rows={2} value={text} maxLength={4000} onChange={e=>{setText(e.target.value);onDirty(e.target.value!==action.action);}} disabled={disabled||!!adopted}/><details><summary>为什么建议这样做</summary><p>{action.why}</p><p>执行时留下：{action.record_hint}</p><small>{action.basis_material_ids.length?`参考 ${action.basis_material_ids.length} 份纳入的关联材料`:'尚无关联材料；这是待执行的探索安排。'}</small></details><button className="secondary" disabled={disabled||!!adopted||!text.trim()} onClick={()=>onAdopt(action.id,text)}>{adopted?<><IconCheck size={16}/>已加入行动</>:'加入行动安排'}</button></article>;
 }
 
-export function LifecyclePlanner({project,onAction,busy,aiConfigured,onMaterials,section="guidance",onDraftChange,recordRequest,findingsRequest}){
+export function LifecyclePlanner({project,onAction,busy,aiConfigured,onMaterials,section="guidance",onDraftChange,recordRequest,findingsRequest,reportDraft=false}){
   const s=project.lifecycle, ready=!!s?.questions?.length;
   const [editing,setEditing]=useState(!ready),[recording,setRecording]=useState(false),[error,setError]=useState(''),[view,setView]=useState(null);
   const [dirty,setDirty]=useState({});
@@ -94,7 +94,7 @@ export function LifecyclePlanner({project,onAction,busy,aiConfigured,onMaterials
       {linkEditor&&<ObservationLink key={linkEditor.id||'new'} project={project} observation={s.observations.find(o=>o.id===linkEditor.id)} changed={view?.changed_observations?.includes(linkEditor.id)} busy={busy||!view} onDirty={value=>mark('link',value)} onCancel={closeLink} onSave={async observation=>{if(await act(linkEditor.id?'practice_edit_observation':'practice_link_material',{observation,...(linkEditor.id?{observation_id:linkEditor.id}:{})})){setLinkEditor(null);mark('link',false);}}}/>}
       {!s.observations.length&&!recording&&<p className="compact-note">保留实际经历、不同反馈和仍不确定的地方，指导会随记录更新。</p>}
       {s.observations.length>0&&<PracticeFindings project={project} view={view} busy={busy} onEdit={openLink} onMaterials={onMaterials} request={findingsRequest}/>}
-      <PracticeReport project={project} busy={busy} hasDraft={hasDraft} onCreate={()=>act('practice_report')}/>
+      <PracticeReport project={project} busy={busy} hasDraft={hasDraft||reportDraft} onCreate={()=>act('practice_report')}/>
 
     </>}
     </div>

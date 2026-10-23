@@ -1,3 +1,4 @@
+import {ReportDraft} from './ReportDraft.jsx';
 import {FieldworkArt} from "./FieldworkArt.jsx";
 import {LifecyclePlanner} from "./LifecyclePlanner.jsx";
 import {useEffect, useMemo, useRef, useState} from "react";
@@ -96,7 +97,10 @@ function RevisionDiscussion({comments = [], previous = false}) {
   </details>;
 }
 
-export function ProjectOverview({project, result, onSave, onUpload, onReview, onMaterials, onRecheck, onTask, onLocate, onRevision, revision, revisionLoading, allowAI, onAllowAI, aiConfigured, busy, onMembers, onTaskDetail, onCreateTask, onComment, onArchive, onPackage, actor, onActor, onQuickRecord, hasEdits, deliveryCheck, onPractice, onDraftChange, hasPracticeDraft, reportRequest}) {
+export function ProjectOverview({project, result, onSave, onUpload, onReview, onMaterials, onRecheck, onTask, onLocate, onRevision, revision, revisionLoading, allowAI, onAllowAI, aiConfigured, busy, onMembers, onTaskDetail, onCreateTask, onComment, onArchive, onPackage, actor, onActor, onQuickRecord, hasEdits, deliveryCheck, onPractice, onDraftChange, hasPracticeDraft, reportRequest, currentReport}) {
+  const [reportDirty,setReportDirty]=useState(false),[lifecycleDirty,setLifecycleDirty]=useState(false);
+  useEffect(()=>{onDraftChange?.(reportDirty||lifecycleDirty);},[reportDirty,lifecycleDirty,onDraftChange]);
+  useEffect(()=>()=>onDraftChange?.(false),[onDraftChange]);
   const [section, setSection] = useState(project.lifecycle?.questions?.length || project.report.text ? "overview" : "guidance");
   useEffect(()=>{if(reportRequest?.id===project.id)setSection("overview");},[reportRequest,project.id]);
   const [findingsRequest,setFindingsRequest] = useState(null);
@@ -273,15 +277,15 @@ export function ProjectOverview({project, result, onSave, onUpload, onReview, on
       )}
     </section>
     </div>
-    {onPractice && <div hidden={section==='overview'}><LifecyclePlanner findingsRequest={findingsRequest} recordRequest={recordRequest} key={project.id} section={section} onDraftChange={onDraftChange} project={project} onAction={async(action,values)=>{const p=await onPractice(action,values);if(action==='practice_report')setSection('overview');return p;}} busy={busy || archived(project)} aiConfigured={aiConfigured} onMaterials={onMaterials}/></div>}
+    {onPractice && <div hidden={section==='overview'}><LifecyclePlanner reportDraft={reportDirty} findingsRequest={findingsRequest} recordRequest={recordRequest} key={project.id} section={section} onDraftChange={setLifecycleDirty} project={project} onAction={async(action,values)=>{const p=await onPractice(action,values);if(action==='practice_report')setSection('overview');return p;}} busy={busy || archived(project)} aiConfigured={aiConfigured} onMaterials={onMaterials}/></div>}
     <div hidden={section!=="overview"}>
     <details className="project-settings"><summary>项目名称与简介</summary><form onSubmit={event => {event.preventDefault();const fields = new FormData(event.currentTarget);onSave({name: fields.get("name"), description: fields.get("description")});}}><label>项目名称<input name="name" defaultValue={project.name} maxLength={200} required disabled={busy}/></label><label>实践主题、地点与对象<textarea name="description" defaultValue={project.description} maxLength={2000} rows={3} disabled={busy}/></label><button className="secondary" disabled={busy}>保存项目信息</button></form></details>
     <section className="project-report-card">
       <div className="report-card-heading"><span className="report-card-icon"><IconFileText size={24}/></span><div><h2>报告与结论</h2><p>{project.report.text ? project.report.name : "上传报告，或粘贴准备核对的文字。"}</p></div></div>
       {project.needs_review && <p className="material-change-note compact-change-note">{result ? "资料已变化，请复查当前依据。" : "报告已准备好，可以开始核对。"}</p>}
-      <div className="project-primary-actions"><button className="primary" onClick={onRecheck} disabled={busy || !project.report.text.trim()}>{busy ? "正在核对…" : "用 AI 核对当前资料"}</button>{result && <button className="secondary" onClick={onReview} disabled={busy}>查看结论</button>}<button className="text-button" onClick={onUpload} disabled={busy}>{project.report.text ? "更换报告" : "上传报告"}</button></div>
+      <div className="project-primary-actions"><button className="primary" onClick={onRecheck} disabled={busy || reportDirty || !project.report.text.trim()}>{busy ? "正在核对…" : "用 AI 核对当前资料"}</button>{result && <button className="secondary" onClick={onReview} disabled={busy}>查看结论</button>}<button className="text-button" onClick={onUpload} disabled={busy||reportDirty}>{project.report.text ? "更换报告" : "上传报告"}</button></div>
       <ProcessingConsent/>
-      <details className="quick-claim"><summary>粘贴正文或核对一句话</summary><form onSubmit={event => {event.preventDefault();onSave({report: {id: "report", name: project.report.name || "结论草稿", text: new FormData(event.currentTarget).get("text"), notes: []}});}}><label>待核对文字<textarea key={project.report.text} name="text" defaultValue={project.report.text} rows={6} maxLength={24000} required disabled={busy}/></label><button className="secondary" disabled={busy}>保存待核对文字</button></form></details>
+      <ReportDraft report={currentReport||project.report} text={(currentReport||project.report).text} busy={busy||archived(project)} onSave={onSave} onDirty={setReportDirty}/>
     </section>
     {deliveryCheck}
     </div>
