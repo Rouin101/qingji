@@ -31,7 +31,7 @@ export function DeliveryCheck({version,hasEdits,busy,onCheck,onNavigate}) {
         {!data.check.review.current&&<p className="delivery-stale">以下判断和作者选择属于已保存记录，需复查后再用于当前正文。</p>}
         <div className="delivery-sections">{data.check.sections.map(section=><details key={section.id} className="delivery-section">
           <summary>{section.title}<span>{section.items.length}</span></summary>
-          {section.items.length?<><ul>{section.items.map((item,index)=><li key={index}><p>{item.label}</p>{item.detail&&<small>{item.detail}</small>}</li>)}</ul>
+          {section.items.length?<><ul>{section.items.map((item,index)=><li key={index}><p>{item.label}</p>{item.detail&&<small>{item.detail}</small>}{item.observation_id&&<button className="text-button" type="button" disabled={busy||loading||stale} onClick={()=>onNavigate("practice-records",{observationId:item.observation_id})}>查看这条记录</button>}</li>)}</ul>
             <button className="text-button" type="button" disabled={busy||loading} onClick={()=>onNavigate(section.target)}>去查看</button></>:
             <p className="compact-note">当前没有此类待处理项。</p>}
         </details>)}</div>

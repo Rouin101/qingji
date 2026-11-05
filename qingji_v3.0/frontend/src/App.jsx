@@ -363,11 +363,11 @@ export function App() {
     catch(e){setError(e.message);}
   }
 
-  async function navigate(destination) {
+  async function navigate(destination, options={}) {
     if(destination==="practice-records"){
       if(busy||operationRef.current||!projectRef.current)return;
       if(screen!=="project"&&!mayLeavePractice())return;
-      try{await flushEdits();setReportRequest({id:projectRef.current.id,section:"actions",sequence:Date.now()});setScreen("project");}
+      try{await flushEdits();setReportRequest({id:projectRef.current.id,section:"actions",observationId:options.observationId||"",sequence:Date.now()});setScreen("project");}
       catch(e){setError(e.message);}return;
     }
     if(destination!==screen&&!mayLeavePractice())return;
