@@ -4,6 +4,7 @@ SHA-256 只检测包内容改变，不验证提供者身份，也不证明材料
 包只包含青迹已保存的文字和关系，不包含服务配置或原上传文件二进制。
 """
 from __future__ import annotations
+from core.material_limits import MAX_STORED_MATERIALS
 
 import copy
 import hashlib
@@ -211,7 +212,7 @@ def _tasks(items, project, historical_material_ids=()):
         if kind not in {"evidence", "practice"} or status not in TASK_STATUSES:
             raise ReviewError("交接文件中的任务类型或状态无效。")
         mids = item.get("material_ids", [])
-        if not isinstance(mids, list) or len(mids) > 8 or any(not isinstance(mid, str) or mid not in materials for mid in mids) or len(set(mids)) != len(mids):
+        if not isinstance(mids, list) or len(mids) > MAX_STORED_MATERIALS or any(not isinstance(mid, str) or mid not in materials for mid in mids) or len(set(mids)) != len(mids):
             raise ReviewError("交接任务无法对应项目材料。")
         category = item.get("category", "实践任务" if kind == "practice" else "其他")
         if category not in CATEGORIES | {"实践任务"}:

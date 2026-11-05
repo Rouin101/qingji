@@ -59,7 +59,7 @@ def input_documents(body: dict) -> tuple[Document, list[Document]]:
     report = convert(body.get("report"), "report")
     raw_materials = body.get("materials", [])
     if not isinstance(raw_materials, list) or len(raw_materials) > 8:
-        raise ReviewError("每次请提供不超过八份补充材料。")
+        raise ReviewError("本轮最多纳入 8 份材料，请到材料与来源调整范围；已保存材料不会删除。")
     materials = [convert(m, m.get("id", f"m{i + 1}")) for i, m in enumerate(raw_materials) if isinstance(m,dict)]
     if len(materials)!=len(raw_materials) or any(not isinstance(d.id,str) or len(d.id)>80 for d in materials):
         raise ReviewError("材料标识不完整。")

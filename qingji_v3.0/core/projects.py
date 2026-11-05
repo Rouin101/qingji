@@ -1,5 +1,6 @@
 """独立本地项目库：原文、来源语境、补证与审阅版本。"""
 from __future__ import annotations
+from core.material_limits import MAX_STORED_MATERIALS, MAX_STORED_CHARS
 import copy
 import json
 import sqlite3
@@ -52,8 +53,8 @@ def document(item, material=False):
     return value
 
 def material_list(items):
-    if not isinstance(items, list) or len(items)>8:
-        raise ReviewError("每个项目目前最多保存八份补充材料。")
+    if not isinstance(items, list) or len(items)>MAX_STORED_MATERIALS:
+        raise ReviewError("每个项目最多保存 100 份材料；本轮 AI 范围单独选择。")
     result=[]
     for item in items:
         d=document(item, True)
@@ -64,8 +65,8 @@ def material_list(items):
         result.append(d)
     if len({d["id"] for d in result}) != len(result):
         raise ReviewError("材料标识不能重复。")
-    if sum(len(d["text"]) for d in result)>MAX_MATERIAL_CHARS:
-        raise ReviewError("项目材料总文字超过48,000字，请精简或分开项目。")
+    if sum(len(d["text"]) for d in result)>MAX_STORED_CHARS:
+        raise ReviewError("项目材料总文字超过 480,000 字；不会自动截断。")
     return result
 
 class ProjectStore:
@@ -311,10 +312,10 @@ class ProjectStore:
                 current={m["id"]:m for m in p["materials"]}
                 if task["kind"]!="evidence":
                     raise ReviewError("独立实践分工不能设置补证材料关联。")
-                if (not isinstance(mids,list) or len(mids)>8
+                if (not isinstance(mids,list) or len(mids)>MAX_STORED_MATERIALS
                         or any(not isinstance(mid,str) or mid not in current for mid in mids)
                         or len(set(mids))!=len(mids)):
-                    raise ReviewError("请从当前项目选择不重复的关联材料，最多八份。")
+                    raise ReviewError("请从当前项目选择不重复的关联材料，最多 100 份。")
                 if set(mids)!=set(task["material_ids"]):
                     snapshots={m["id"]:m for m in p.get("review_materials",[])} | current
                     def describe(ids):

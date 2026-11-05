@@ -1,5 +1,6 @@
 """Question-led practice guidance. Suggestions, observations and support are separate."""
 from __future__ import annotations
+from core.material_limits import validate_scope
 import copy
 import hashlib
 import json
@@ -112,6 +113,7 @@ def generate_guidance(project, mode='template', complete=None):
     if mode=='template':return template_guidance(project)
     if mode!='ai' or complete is None:raise ReviewError('不支持该指导方式或尚未配置AI。')
     context=context_of(project)
+    validate_scope(list({o['material_id']:o['source'] for o in context['observations']}.values()))
     if len(json.dumps(context,ensure_ascii=False))>60000:
         raise ReviewError('本轮指导上下文超过限额，请先整理材料；不会截断后发送。')
     messages=[{'role':'system','content':

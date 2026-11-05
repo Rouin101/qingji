@@ -1,3 +1,4 @@
+import {MaterialScope,materialBudget} from './MaterialScope.jsx';
 import {ReportDraft} from './ReportDraft.jsx';
 import {FieldworkArt} from "./FieldworkArt.jsx";
 import {LifecyclePlanner} from "./LifecyclePlanner.jsx";
@@ -409,6 +410,7 @@ export function MaterialCitationsSection({
 }
 
 export function MaterialsPanel({
+  lifecycle, onScopeChange,
   materials,
   reviewMaterials = [],
   result,
@@ -468,10 +470,12 @@ export function MaterialsPanel({
     return matchesStatus && `${material.name} ${material.text} ${material.context || ""} ${material.source_role || ""} ${(material.tags || []).join(" ")}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase());
   });
   const includedCount = materials.filter(material => material.enabled !== false).length;
+  const scopeBudget=materialBudget(materials);
 
   return <main className="project-content material-content refined-material-content">
     <p className="eyebrow">实践材料</p><div className="section-title"><h1>材料与来源</h1><div className="section-actions">{onQuickRecord && <button className="secondary" onClick={onQuickRecord} disabled={busy}><IconNotes size={17}/>记一条记录</button>}<button className="primary" onClick={onUpload} disabled={busy}><IconPlus size={18}/>补充材料</button></div></div><div className="material-intro-art"><p className="subtle material-intro">保留原始记录，也保留它的来源与边界。</p><FieldworkArt kind="archive"/></div>
     {needsReview && <p className="material-change-note">材料已更新，可进入结论核验。</p>}
+    <MaterialScope materials={materials} lifecycle={lifecycle} onSelect={onScopeChange} busy={busy}/>
     {materials.length > 0 && <div className="library-controls material-library-controls"><label className="search-control"><IconSearch size={17}/><input value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索材料与正文" aria-label="搜索实践材料" disabled={busy}/></label><label className="filter-choice"><span className="sr-only">材料状态</span><select aria-label="材料状态筛选" value={filter} onChange={event => setFilter(event.target.value)} disabled={busy}><option value="all">全部材料（{materials.length}）</option><option value="included">本轮纳入</option><option value="excluded">已排除</option></select></label></div>}
     <fieldset className="material-controls" disabled={busy}><legend className="sr-only">材料来源与核对设置</legend>
       {visible.length ? <div className="material-library">{visible.map(({material, index}) => <article className={`material-card refined-material-card ${material.enabled === false ? "excluded" : ""}`} key={material.id || index} id={`material-${material.id}`}>
@@ -509,7 +513,7 @@ export function MaterialsPanel({
           {removeError && <p className="inline-error" role="alert">{removeError}</p>}
         </div>}
       </article>)}</div> : <div className="inline-empty material-empty"><FieldworkArt kind="notes"/><p>{materials.length ? "没有找到匹配的材料。" : "把访谈、观察或公开资料留在这里，并保留来源。"}</p>{materials.length > 0 && <button className="text-button" onClick={() => {setQuery("");setFilter("all");}}>显示全部材料</button>}</div>}
-      <div className="material-save-panel">{hasReport && <ProcessingConsent/>}<div className="material-save-actions">{hasReport && <button className="primary" onClick={onRecheck} disabled={busy}>{busy ? "正在核对…" : "保存并 AI 复查"}</button>}<button className="secondary" onClick={onSave} disabled={busy}>保存材料信息</button><button className="text-button" onClick={onReview} disabled={busy}>进入结论核验</button><span className="material-review-scope">本轮纳入 {includedCount} / {materials.length} 份</span></div></div>
+      <div className="material-save-panel">{hasReport && <ProcessingConsent/>}<div className="material-save-actions">{hasReport && <button className="primary" onClick={onRecheck} disabled={busy||scopeBudget.over}>{busy ? "正在核对…" : "保存并 AI 复查"}</button>}<button className="secondary" onClick={onSave} disabled={busy}>保存材料信息</button><button className="text-button" onClick={onReview} disabled={busy}>进入结论核验</button><span className="material-review-scope">本轮纳入 {includedCount} / {materials.length} 份</span></div></div>
     </fieldset>
   </main>;
 }
