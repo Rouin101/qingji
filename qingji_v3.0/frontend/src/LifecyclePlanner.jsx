@@ -1,3 +1,5 @@
+import {useLocalDraft,DraftRecovery} from './LocalDraft.jsx';
+import {draftText} from './draft-storage.js';
 import {PracticeReport} from './PracticeReport.jsx';
 import {PracticeFindings} from './PracticeFindings.jsx';
 import {ObservationLink} from './ObservationLink.jsx';
@@ -9,27 +11,40 @@ const stages=[['prepare','出发前'],['field','实践中'],['report','整理与
 const labels={topic:'实践主题',goal:'希望弄清楚什么',audience:'对象',location:'地点',timeframe:'时间安排',resources:'人员与现实条件'};
 const fresh={topic:'',goal:'',audience:'',location:'',timeframe:'',resources:''};
 
-function BriefForm({state,onSave,busy}){
+function BriefForm({state,onSave,busy,project,onDirty}){
   const [brief,setBrief]=useState(state?.brief||fresh);
   const [questions,setQuestions]=useState(state?.questions?.length?state.questions:[{id:'q'+crypto.randomUUID(),text:''}]);
   const [stage,setStage]=useState(state?.stage||'prepare');
+  const [touched,setTouched]=useState(false);
+  const backup=useLocalDraft({projectId:project.id,kind:'brief',version:project.version,value:{brief,questions,stage},dirty:touched,onRestore:v=>{
+    setBrief(Object.fromEntries(Object.keys(fresh).map(k=>[k,draftText(v.brief,k,'',800)])));
+    if(Array.isArray(v.questions)&&v.questions.length>0&&v.questions.length<=8&&v.questions.every(q=>typeof q.id==='string'&&typeof q.text==='string'))setQuestions(v.questions);
+    if(stages.some(([id])=>id===v.stage))setStage(v.stage);setTouched(true);onDirty(true);
+  }});
   const linked=new Set([...Object.values(state?.task_links||{}),...(state?.observations||[]).map(o=>o.question_id)]);
-  return <form className="practice-brief" onSubmit={e=>{e.preventDefault();onSave({brief,questions,stage});}}>
+  return <form className="practice-brief" onChange={()=>setTouched(true)} onSubmit={async e=>{e.preventDefault();if(await onSave({brief,questions,stage})){backup.clear();setTouched(false);}}}>
+    <DraftRecovery draft={backup} busy={busy}/>
     <div className="practice-form-grid">{['topic','goal'].map(key=><label key={key} className="wide">{labels[key]}{key==='goal'?<textarea required maxLength={800} rows={2} value={brief[key]} onChange={e=>setBrief({...brief,[key]:e.target.value})}/>:<input required maxLength={800} value={brief[key]} onChange={e=>setBrief({...brief,[key]:e.target.value})}/>}</label>)}</div>
-    <fieldset className="practice-question-fields"><legend>先带着哪些问题出发</legend><p className="compact-note">写开放的问题，给不同反馈留出空间。保留1至8个，可以继续调整。</p>{questions.map((q,i)=><div key={q.id}><label>实践问题 {i+1}<input value={q.text} required maxLength={400} placeholder="如：哪些操作环节容易遇到困难？" onChange={e=>setQuestions(questions.map(item=>item.id===q.id?{...item,text:e.target.value}:item))}/></label>{questions.length>1&&<button type="button" className="text-button" disabled={linked.has(q.id)} title={linked.has(q.id)?'已有行动或记录关联，可修改文字，保留关联':''} onClick={()=>setQuestions(questions.filter(item=>item.id!==q.id))}>移除</button>}</div>)}<button type="button" className="text-button" disabled={questions.length>=8||busy} onClick={()=>setQuestions([...questions,{id:'q'+crypto.randomUUID(),text:''}])}><IconPlus size={16}/>再加一个问题</button></fieldset>
+    <fieldset className="practice-question-fields"><legend>先带着哪些问题出发</legend><p className="compact-note">写开放的问题，给不同反馈留出空间。保留1至8个，可以继续调整。</p>{questions.map((q,i)=><div key={q.id}><label>实践问题 {i+1}<input value={q.text} required maxLength={400} placeholder="如：哪些操作环节容易遇到困难？" onChange={e=>setQuestions(questions.map(item=>item.id===q.id?{...item,text:e.target.value}:item))}/></label>{questions.length>1&&<button type="button" className="text-button" disabled={linked.has(q.id)} title={linked.has(q.id)?'已有行动或记录关联，可修改文字，保留关联':''} onClick={()=>{setTouched(true);onDirty(true);setQuestions(questions.filter(item=>item.id!==q.id));}}>移除</button>}</div>)}<button type="button" className="text-button" disabled={questions.length>=8||busy} onClick={()=>{setTouched(true);onDirty(true);setQuestions([...questions,{id:'q'+crypto.randomUUID(),text:''}]);}}><IconPlus size={16}/>再加一个问题</button></fieldset>
     <details className="practice-optional"><summary>对象、地点与团队条件 <span>可后补</span></summary><div className="practice-form-grid">{['audience','location','timeframe','resources'].map(key=><label key={key}>{labels[key]}<input maxLength={800} value={brief[key]} placeholder="可以稍后补充" onChange={e=>setBrief({...brief,[key]:e.target.value})}/></label>)}</div></details>
     <label>目前进展<select aria-label="目前进展" value={stage} onChange={e=>setStage(e.target.value)}>{stages.map(([id,label])=><option key={id} value={id}>{label}</option>)}</select></label><button className="primary" disabled={busy}>保存方向与问题 <IconArrowRight size={17}/></button>
   </form>;
 }
 
-function ObservationForm({project,onSubmit,busy,initial}){
+function ObservationForm({project,onSubmit,busy,initial,onDirty}){
   const s=project.lifecycle;const [qid,setQid]=useState(initial?.questionId || s.questions[0].id);
   const [taskId,setTaskId]=useState(initial?.taskId || "");
-  return <form className="practice-record-form" onSubmit={e=>{e.preventDefault();const fields=new FormData(e.currentTarget);onSubmit(Object.fromEntries(fields));}}><fieldset disabled={busy}>
-    <div className="practice-form-grid"><label>关联问题<select aria-label="关联问题" name="question_id" value={qid} onChange={e=>{setQid(e.target.value);setTaskId("");}}>{s.questions.map(q=><option key={q.id} value={q.id}>{q.text}</option>)}</select></label><label>对应行动<select aria-label="对应行动" name="task_id" value={taskId} onChange={e=>setTaskId(e.target.value)}><option value="">暂不关联行动</option>{project.tasks.filter(t=>s.task_links[t.id]===qid).map(t=><option key={t.id} value={t.id}>{t.action}</option>)}</select></label></div>
-    <label>实际留下的原始记录<textarea name="text" rows={4} maxLength={12000} required placeholder="记录实际听到、看到的情况，保留不同反馈。"/></label>
-    <div className="practice-form-grid"><label>来源类型<select aria-label="来源类型" name="source_role" defaultValue="受访者陈述">{['待确认','受访者陈述','工作人员说明','现场观察','正式记录','团队分析'].map(r=><option key={r}>{r}</option>)}</select></label><label>采集时间<input name="collected_at" type="date"/></label><label className="wide">对象与场景<input name="context" maxLength={1000} placeholder="如：某社区便民服务点，一次现场访谈"/></label></div>
-    <label>团队的阶段发现<textarea name="finding" rows={2} maxLength={2000} placeholder="可以暂时留空，后续结合记录核对。"/></label><label>仍不确定什么<textarea name="uncertainty" rows={2} maxLength={2000} placeholder="哪些人、环节或不同情况还没了解？"/></label>
+  const [fields,setFields]=useState(null),[defaults,setDefaults]=useState({}),[formKey,setFormKey]=useState(0);
+  const backup=useLocalDraft({projectId:project.id,kind:'observation',version:project.version,value:fields||{},dirty:!!fields,onRestore:v=>{
+    const restored=Object.fromEntries(['text','source_role','collected_at','context','finding','uncertainty','question_id','task_id'].map(k=>[k,draftText(v,k)]));
+    setDefaults(restored);setFields(restored);setQid(s.questions.some(q=>q.id===restored.question_id)?restored.question_id:'');
+    setTaskId(project.tasks.some(t=>t.id===restored.task_id&&s.task_links[t.id]===restored.question_id)?restored.task_id:'');setFormKey(k=>k+1);onDirty(true);
+  }});
+  return <form key={formKey} onChange={e=>setFields(Object.fromEntries(new FormData(e.currentTarget)))} className="practice-record-form" onSubmit={async e=>{e.preventDefault();const fields=new FormData(e.currentTarget);if(await onSubmit(Object.fromEntries(fields))){backup.clear();setFields(null);}}}><fieldset disabled={busy}><DraftRecovery draft={backup} busy={busy}/>
+    <div className="practice-form-grid"><label>关联问题<select aria-label="关联问题" name="question_id" required value={qid} onChange={e=>{setQid(e.target.value);setTaskId("");}}><option value="">请选择问题</option>{s.questions.map(q=><option key={q.id} value={q.id}>{q.text}</option>)}</select></label><label>对应行动<select aria-label="对应行动" name="task_id" value={taskId} onChange={e=>setTaskId(e.target.value)}><option value="">暂不关联行动</option>{project.tasks.filter(t=>s.task_links[t.id]===qid).map(t=><option key={t.id} value={t.id}>{t.action}</option>)}</select></label></div>
+    <label>实际留下的原始记录<textarea name="text" defaultValue={defaults.text||""} rows={4} maxLength={12000} required placeholder="记录实际听到、看到的情况，保留不同反馈。"/></label>
+    <div className="practice-form-grid"><label>来源类型<select aria-label="来源类型" name="source_role" defaultValue={defaults.source_role||"受访者陈述"}>{['待确认','受访者陈述','工作人员说明','现场观察','正式记录','团队分析'].map(r=><option key={r}>{r}</option>)}</select></label><label>采集时间<input name="collected_at" defaultValue={defaults.collected_at||""} type="date"/></label><label className="wide">对象与场景<input name="context" defaultValue={defaults.context||""} maxLength={1000} placeholder="如：某社区便民服务点，一次现场访谈"/></label></div>
+    <label>团队的阶段发现<textarea name="finding" defaultValue={defaults.finding||""} rows={2} maxLength={2000} placeholder="可以暂时留空，后续结合记录核对。"/></label><label>仍不确定什么<textarea name="uncertainty" defaultValue={defaults.uncertainty||""} rows={2} maxLength={2000} placeholder="哪些人、环节或不同情况还没了解？"/></label>
     <input type="hidden" name="consent_status" value="confirmed"/><button className="primary" disabled={busy}>保存实际记录</button><p className="compact-note">保存后进入实践材料；行动是否完成由团队另行确认。</p></fieldset>
   </form>;
 }
@@ -48,8 +63,8 @@ export function LifecyclePlanner({project,onAction,busy,aiConfigured,onMaterials
   const recordArea=useRef(null);
   const [focusRecord,setFocusRecord]=useState(0);
   const [linkEditor,setLinkEditor]=useState(null);
-  function closeLink(){if(dirty.link&&!window.confirm('阶段记录尚未保存，放弃这些修改？'))return;setLinkEditor(null);mark('link',false);}
-  function openLink(id=''){if(dirty.link&&!window.confirm('阶段记录尚未保存，放弃这些修改？'))return;setLinkEditor({id});mark('link',false);}
+  function closeLink(){if(dirty.link&&!window.confirm('阶段记录尚未保存，放弃这些修改？'))return false;setLinkEditor(null);mark('link',false);}
+  function openLink(id=''){if(dirty.link&&!window.confirm('阶段记录尚未保存，切换记录？已有浏览器备份会保留。'))return;setLinkEditor({id});mark('link',false);}
   const hasDraft=Object.values(dirty).some(Boolean);
   const mark=(key,value)=>setDirty(current=>({...current,[key]:value}));
   useEffect(()=>{
@@ -57,7 +72,7 @@ export function LifecyclePlanner({project,onAction,busy,aiConfigured,onMaterials
     const task=project.tasks.find(t=>t.id===recordRequest.taskId && t.kind==='practice');
     const questionId=s?.task_links?.[task?.id];
     if(!task || !questionId || busy)return;
-    if(dirty.record && recordTarget?.taskId!==task.id && !window.confirm('当前实际记录尚未保存。放弃这份草稿，改记另一项行动？'))return;
+    if(dirty.record && recordTarget?.taskId!==task.id && !window.confirm('当前实际记录尚未保存。离开这份输入，改记另一项行动？已有浏览器备份会保留。'))return;
     if(!dirty.record || recordTarget?.taskId!==task.id){setRecordTarget({taskId:task.id,questionId});setRecordVersion(v=>v+1);mark('record',false);}
     setRecording(true);setFocusRecord(v=>v+1);
   },[recordRequest]);
@@ -77,7 +92,7 @@ export function LifecyclePlanner({project,onAction,busy,aiConfigured,onMaterials
     <div hidden={section!=="guidance"}>
     <div className="practice-section-heading"><div><p className="eyebrow"><IconCompass size={17}/>青迹 3.0 · 实践指导</p><h2>{ready?'沿着问题，推进这次实践':'从一个想法开始'}</h2></div>{ready&&<button className="text-button" onClick={()=>setEditing(!editing)} disabled={busy}>{editing?'收起':'调整方向'}</button>}</div>
     {ready&&<div className="practice-stages" aria-label="实践阶段">{stages.map(([id,label],i)=><span key={id} className={s.stage===id?'current':''} aria-current={s.stage===id?'step':undefined}><small>{i+1}</small>{label}</span>)}</div>}
-    <div hidden={!editing} onChangeCapture={()=>mark('brief',true)}><BriefForm key={project.id} state={s} busy={busy} onSave={async values=>{if(await act('practice_brief',values)){mark('brief',false);setEditing(false);}}}/></div>
+    <div hidden={!editing} onChangeCapture={()=>mark('brief',true)}><BriefForm project={project} onDirty={value=>mark("brief",value)} key={project.id} state={s} busy={busy} onSave={async values=>{if(await act('practice_brief',values)){mark('brief',false);setEditing(false);return true;}}}/></div>
     <div hidden={editing}>{ready&&<>
       <p className="practice-goal">{s.brief.goal}</p><div className="practice-question-summary">{s.questions.map(q=>{const row=view?.questions.find(item=>item.id===q.id);return <div key={q.id}><strong>{q.text}</strong><small>{row?`${row.record_count} 条记录 · ${row.eligible_count} 条纳入 · ${row.done_count}/${row.task_count} 项行动完成`:'正在整理记录…'}</small></div>;})}</div>
       <div className="practice-next-heading"><h3>下一步怎么做</h3><button className="secondary" disabled={busy||!view} onClick={()=>act('practice_guidance',{mode:'ai',allow_external_processing:true})}>{busy?'正在处理…':guide?'更新下一步建议':'生成行动建议'}</button></div>
@@ -90,8 +105,8 @@ export function LifecyclePlanner({project,onAction,busy,aiConfigured,onMaterials
       {!ready&&<p className="compact-note">可以先安排实践任务；在实践指导中保存问题后，可记录关联发现。</p>}
       {ready&&<>
       <div className="practice-record-heading"><h3>实际发现了什么</h3><div className="observation-actions"><button className="text-button" disabled={busy||!project.materials.length} onClick={()=>openLink()}>关联已有材料</button><button className="text-button" disabled={busy} onClick={()=>setRecording(!recording)}><IconNotes size={16}/>{recording?'收起记录':'记下实际发现'}</button></div></div>
-      <div ref={recordArea} hidden={!recording} onChangeCapture={()=>mark('record',true)}><ObservationForm key={recordVersion} initial={recordTarget} project={project} busy={busy} onSubmit={async observation=>{if(await act('practice_observation',{observation})){mark('record',false);setRecording(false);setRecordTarget(null);setRecordVersion(v=>v+1);}}}/></div>
-      {linkEditor&&<ObservationLink key={linkEditor.id||'new'} project={project} observation={s.observations.find(o=>o.id===linkEditor.id)} changed={view?.changed_observations?.includes(linkEditor.id)} busy={busy||!view} onDirty={value=>mark('link',value)} onCancel={closeLink} onSave={async observation=>{if(await act(linkEditor.id?'practice_edit_observation':'practice_link_material',{observation,...(linkEditor.id?{observation_id:linkEditor.id}:{})})){setLinkEditor(null);mark('link',false);}}}/>}
+      <div ref={recordArea} hidden={!recording} onChangeCapture={()=>mark('record',true)}><ObservationForm onDirty={value=>mark("record",value)} key={recordVersion} initial={recordTarget} project={project} busy={busy} onSubmit={async observation=>{if(await act('practice_observation',{observation})){mark('record',false);setRecording(false);setRecordTarget(null);setRecordVersion(v=>v+1);return true;}}}/></div>
+      {linkEditor&&<ObservationLink key={linkEditor.id||'new'} project={project} observation={s.observations.find(o=>o.id===linkEditor.id)} changed={view?.changed_observations?.includes(linkEditor.id)} busy={busy||!view} onDirty={value=>mark('link',value)} onCancel={closeLink} onSave={async observation=>{if(await act(linkEditor.id?'practice_edit_observation':'practice_link_material',{observation,...(linkEditor.id?{observation_id:linkEditor.id}:{})})){setLinkEditor(null);mark('link',false);return true;}}}/>}
       {!s.observations.length&&!recording&&<p className="compact-note">保留实际经历、不同反馈和仍不确定的地方，指导会随记录更新。</p>}
       {s.observations.length>0&&<PracticeFindings project={project} view={view} busy={busy} onEdit={openLink} onMaterials={onMaterials} request={findingsRequest}/>}
       <PracticeReport project={project} busy={busy} hasDraft={hasDraft||reportDraft} onCreate={()=>act('practice_report')}/>

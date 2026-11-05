@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {chromium} from 'playwright-core';
 import {mkdir,writeFile} from 'node:fs/promises';
-const base='http://127.0.0.1:8774',out='../design/iterations/2026-10-22/task-record';await mkdir(out,{recursive:true});
+const base=process.env.QINGJI_QA_BASE||'http://127.0.0.1:8774',out='../design/iterations/2026-10-22/task-record';await mkdir(out,{recursive:true});
 const b=await chromium.launch({executablePath:'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',headless:true});const ctx=await b.newContext({viewport:{width:1440,height:1000}}),page=await ctx.newPage();page.setDefaultTimeout(12000);const errors=[];page.on('pageerror',e=>errors.push(e.message));
 async function api(data){const r=await ctx.request.post(base+'/api/projects',{data});const p=await r.json();assert(r.ok(),p.error);return p;}
 let p;

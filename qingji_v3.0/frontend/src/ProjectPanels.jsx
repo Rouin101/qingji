@@ -98,7 +98,7 @@ function RevisionDiscussion({comments = [], previous = false}) {
   </details>;
 }
 
-export function ProjectOverview({project, result, onSave, onUpload, onReview, onMaterials, onRecheck, onTask, onLocate, onRevision, revision, revisionLoading, allowAI, onAllowAI, aiConfigured, busy, onMembers, onTaskDetail, onCreateTask, onComment, onArchive, onPackage, actor, onActor, onQuickRecord, hasEdits, deliveryCheck, onPractice, onDraftChange, hasPracticeDraft, reportRequest, currentReport}) {
+export function ProjectOverview({project, result, onSave, onUpload, onReview, onMaterials, onRecheck, onTask, onLocate, onRevision, revision, revisionLoading, allowAI, onAllowAI, aiConfigured, busy, onMembers, onTaskDetail, onCreateTask, onComment, onArchive, onPackage, actor, onActor, onQuickRecord, hasEdits, deliveryCheck, onPractice, onDraftChange, hasPracticeDraft, reportRequest, currentReport, onReportDraftRestored}) {
   const [reportDirty,setReportDirty]=useState(false),[lifecycleDirty,setLifecycleDirty]=useState(false);
   useEffect(()=>{onDraftChange?.(reportDirty||lifecycleDirty);},[reportDirty,lifecycleDirty,onDraftChange]);
   useEffect(()=>()=>onDraftChange?.(false),[onDraftChange]);
@@ -286,7 +286,7 @@ export function ProjectOverview({project, result, onSave, onUpload, onReview, on
       {project.needs_review && <p className="material-change-note compact-change-note">{result ? "资料已变化，请复查当前依据。" : "报告已准备好，可以开始核对。"}</p>}
       <div className="project-primary-actions"><button className="primary" onClick={onRecheck} disabled={busy || reportDirty || !project.report.text.trim()}>{busy ? "正在核对…" : "用 AI 核对当前资料"}</button>{result && <button className="secondary" onClick={onReview} disabled={busy}>查看结论</button>}<button className="text-button" onClick={onUpload} disabled={busy||reportDirty}>{project.report.text ? "更换报告" : "上传报告"}</button></div>
       <ProcessingConsent/>
-      <ReportDraft report={currentReport||project.report} text={(currentReport||project.report).text} busy={busy||archived(project)} onSave={onSave} onDirty={setReportDirty}/>
+      <ReportDraft recoveryRequest={reportRequest?.draftText!==undefined?reportRequest:null} onRecoveryHandled={onReportDraftRestored} projectId={project.id} version={project.version} report={currentReport||project.report} text={(currentReport||project.report).text} busy={busy||archived(project)} onSave={onSave} onDirty={setReportDirty}/>
     </section>
     {deliveryCheck}
     </div>

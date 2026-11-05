@@ -1,3 +1,5 @@
+import {useLocalDraft,DraftRecovery} from './LocalDraft.jsx';
+import {draftText} from './draft-storage.js';
 import {ReviewStart} from "./ReviewStart.jsx";
 import {FieldworkArt} from "./FieldworkArt.jsx";
 import {useEffect, useMemo, useRef, useState} from "react";
@@ -47,7 +49,7 @@ async function readFile(file) {
 export function App() {
   const [reportRequest,setReportRequest] = useState(null);
   const [practiceDraft, setPracticeDraft] = useState(false);
-  const mayLeavePractice = () => !practiceDraft || window.confirm("还有未保存的报告或实践内容。离开将丢失这些输入，确定离开？");
+  const mayLeavePractice = () => !practiceDraft || window.confirm("还有未保存的报告或实践内容。离开不会提交到项目，请确认需要的内容已保存或备份。确定离开？");
   const [screen, setScreen] = useState("home");
   const [project, setProject] = useState(null);
   const [projects, setProjects] = useState([]);
@@ -212,14 +214,11 @@ export function App() {
 
   function keepProject(p) {projectRef.current=p;setProject(p);}
 
-  function cacheEditorDraft(text){
-    setDraft(text);
-    const p=projectRef.current;if(!p)return;
-    try{sessionStorage.setItem(`qingji-v3.editor.${p.id}`,JSON.stringify({text,base_version:p.version,saved_at:new Date().toISOString()}));}
-    catch{setToast("浏览器暂时无法保留草稿，请完成正文保存后再刷新。");}
-  }
+  const editorBackup=useLocalDraft({projectId:project?.id,kind:'review-report',version:project?.version||0,value:{text:draft},dirty:editing&&draft!==displayText,onRestore:v=>{const restoredText=draftText(v,'text','',24000);if(result){setDraft(restoredText);setEditing(true);setScreen('review');setMobilePane('document');}else{setReportRequest({id:project.id,section:'overview',draftText:restoredText,sequence:Date.now()});setScreen('project');}}});
+  function cacheEditorDraft(text){setDraft(text);}
 
   function clearEditorDraft(id=projectRef.current?.id){
+    editorBackup.clear();
     if(id)try{sessionStorage.removeItem(`qingji-v3.editor.${id}`);}catch{}
     setRecoverableDraft(null);
   }
@@ -395,7 +394,7 @@ export function App() {
 
   async function saveDetails(changes) {
     setBusy(true);
-    try {const edits="report" in changes?{...changes,choices:{},manual_text:null}:changes;const p=await persist(edits);if("report" in changes)acceptProject(p,screen);else setMaterials(p.materials.map(m=>({...m,consent_status:"confirmed"})));setToast("项目已保存到本机");return true;}
+    try {const edits="report" in changes?{...changes,choices:{},manual_text:null}:changes;const p=await persist(edits);if("report" in changes){clearEditorDraft(p.id);acceptProject(p,screen);}else setMaterials(p.materials.map(m=>({...m,consent_status:"confirmed"})));setToast("项目已保存到本机");return true;}
     catch(e){setError(e.message);return false;}finally{setBusy(false);}
   }
 
@@ -796,6 +795,7 @@ export function App() {
     </header>}
     {error && <div className="error-message" role="alert"><span>{error}</span><button className="icon-button" aria-label="关闭提示" onClick={() => setError("")}><Icon as={IconX}/></button></div>}
     {toast && <div className="toast" role="status"><Icon as={IconCheck}/>{toast}</div>}
+    {project&&<DraftRecovery draft={editorBackup} busy={busy}/>}
     {recoverableDraft&&project&&<div className="draft-recovery" role="status"><span>有一份未保存的正文草稿{recoverableDraft.base_version!==project.version?"，项目已有更新":""}。</span><button className="text-button" onClick={recoverEditor} disabled={busy}>继续编辑草稿</button><button className="text-button" onClick={()=>clearEditorDraft()} disabled={busy}>舍弃草稿</button></div>}
     {reviewing&&<div className="review-progress" role="status" aria-live="polite"><Icon as={IconLoader2} className="spin"/><span><strong>正在核对报告与依据</strong><small>{project?"完成后会显示新结果，当前记录已保存在项目中。":"正在准备实践项目，随后开始核对。"}</small></span><span className="review-time" aria-hidden="true">已等待 {reviewSeconds} 秒</span></div>}
 
@@ -824,7 +824,7 @@ export function App() {
         onSave={()=>saveDetails({materials})} onUpload={()=>materialsInput.current?.click()} onQuickRecord={()=>openQuickRecord()} onEdit={openQuickRecord} onRemove={removeMaterial}
         onPreview={m=>setCitation({document_id:m.id,start:0,end:0,quote:"",live:true})} onPreviewCitation={c=>setCitation({...c,live:false})} onLocateIssue={locateIssue} onReview={()=>navigate("review")} onRecheck={()=>recheck(true)}
         hasReport={!!report?.text?.trim()} allowAI={allowAI} aiConfigured={status?.ai_configured} busy={busy} needsReview={project.needs_review}/>
-      : <ProjectOverview currentReport={currentReport} key={project.id} reportRequest={reportRequest} onDraftChange={setPracticeDraft} hasPracticeDraft={practiceDraft} onPractice={async(action, values)=>{const p=await teamAction(action,values,"实践进展已保存");acceptProject(p,"project",{preserveTab:true});return p;}} project={project} result={result} onSave={saveDetails} onUpload={()=>reportInput.current?.click()} onReview={()=>navigate("review")}
+      : <ProjectOverview onReportDraftRestored={()=>setReportRequest(null)} currentReport={currentReport} key={project.id} reportRequest={reportRequest} onDraftChange={setPracticeDraft} hasPracticeDraft={practiceDraft} onPractice={async(action, values)=>{const p=await teamAction(action,values,"实践进展已保存");acceptProject(p,"project",{preserveTab:true});return p;}} project={project} result={result} onSave={saveDetails} onUpload={()=>reportInput.current?.click()} onReview={()=>navigate("review")}
         deliveryCheck={<DeliveryCheck version={project.version} hasEdits={editing||JSON.stringify(workingState())!==savedState.current} busy={busy} onCheck={loadDeliveryCheck} onNavigate={navigate}/>}
         onMaterials={()=>navigate("materials")} onQuickRecord={()=>openQuickRecord()} onRecheck={()=>recheck(true)} onTask={taskAction} onLocate={locateTask} onRevision={showRevision} revision={revision} revisionLoading={revisionLoading}
         allowAI={allowAI} aiConfigured={status?.ai_configured} busy={busy} actor={actorId} onActor={setActor} hasEdits={hasEdits||editing}
@@ -913,7 +913,7 @@ export function App() {
       </main>
     </>}
     </div>{citation&&sourceDocument&&<SourceViewer document={sourceDocument} citation={citation} snapshot={!citation.live} onClose={()=>setCitation(null)}/>}
-    {quickRecordOpen&&<QuickRecord initial={recordToEdit} onSave={saveQuickRecord} onClose={()=>{setQuickRecordOpen(false);setRecordToEdit(null);}} busy={busy}/>}
+    {quickRecordOpen&&<QuickRecord projectId={project?.id} version={project?.version||0} initial={recordToEdit} onSave={saveQuickRecord} onClose={()=>{setQuickRecordOpen(false);setRecordToEdit(null);}} busy={busy}/>}
     {conflict&&<ConflictDialog conflict={conflict} onResolve={resolveConflict} onBackup={backupConflict} busy={busy}/>}
   </div>;
 }

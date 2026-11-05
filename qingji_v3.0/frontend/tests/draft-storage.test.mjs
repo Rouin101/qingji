@@ -1,0 +1,9 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readDrafts,writeDraft,removeDraft,draftPrefix} from '../src/draft-storage.js';
+class Storage{map=new Map();get length(){return this.map.size;}key(i){return [...this.map.keys()][i];}getItem(k){return this.map.get(k)??null;}setItem(k,v){this.map.set(k,v);}removeItem(k){this.map.delete(k);}}
+test('projects, forms and windows keep separate drafts',()=>{const s=new Storage();writeDraft(s,'p1','report','window1',1,{text:'甲'});writeDraft(s,'p1','report','window2',1,{text:'乙'});writeDraft(s,'p2','report','window1',1,{text:'其他项目'});writeDraft(s,'p1','record','window1',1,{text:'现场记录'});assert.equal(readDrafts(s,'p1','report').length,2);assert.equal(readDrafts(s,'p2','report')[0].value.text,'其他项目');});
+test('saving recovered copy never deletes a newer original-window draft',()=>{const s=new Storage();const old=writeDraft(s,'p','r','w',1,{text:'原文'});writeDraft(s,'p','r','w',2,{text:'新输入'});removeDraft(s,old);assert.equal(readDrafts(s,'p','r')[0].value.text,'新输入');});
+test('only completed or explicitly discarded draft is removed',()=>{const s=new Storage();const one=writeDraft(s,'p','r','one',1,{text:'甲'});writeDraft(s,'p','r','two',1,{text:'乙'});removeDraft(s,one);assert.equal(readDrafts(s,'p','r').length,1);});
+test('malformed or mismatched backup is ignored without modifying storage',()=>{const s=new Storage();s.setItem(draftPrefix('p','r')+'bad','{');s.setItem(draftPrefix('p','r')+'other',JSON.stringify({schema:1,project:'other',kind:'r',version:1,savedAt:1,value:{text:'不能恢复'}}));assert.deepEqual(readDrafts(s,'p','r'),[]);assert.equal(s.length,2);});
+test('quota failure propagates for visible error handling',()=>{assert.throws(()=>writeDraft({setItem(){throw Error('quota');}},'p','r','w',1,{text:'原文'}),/quota/);});
