@@ -1,21 +1,26 @@
-import {useEffect,useState} from 'react';
+import {useLocalDraft,DraftRecovery} from './LocalDraft.jsx';
+import {draftText} from './draft-storage.js';
+import {useEffect,useState,useRef} from 'react';
 
-export function ReportDraft({report,text,busy,onSave,onDirty}){
+export function ReportDraft({report,text,busy,onSave,onDirty,projectId,version,recoveryRequest,onRecoveryHandled}){
   const [draft,setDraft]=useState(text),[base,setBase]=useState(text),[error,setError]=useState('');
+  const disclosure=useRef(null);
+  useEffect(()=>{if(!recoveryRequest)return;setDraft(recoveryRequest.draftText);setBase(text);if(disclosure.current)disclosure.current.open=true;onRecoveryHandled?.();},[recoveryRequest]);
   const dirty=draft!==base;
   const changed=text!==base;
+  const backup=useLocalDraft({projectId,kind:'report',version,value:{text:draft},dirty,onRestore:v=>{setDraft(draftText(v,'text','',24000));setBase(text);}});
   useEffect(()=>{if(!dirty){setDraft(text);setBase(text);}},[text,dirty]);
   useEffect(()=>{onDirty(dirty);},[dirty,onDirty]);
   useEffect(()=>()=>onDirty(false),[onDirty]);
   useEffect(()=>{if(!dirty)return;const warn=e=>{e.preventDefault();e.returnValue='';};window.addEventListener('beforeunload',warn);return()=>window.removeEventListener('beforeunload',warn);},[dirty]);
-  function discard(){if(dirty&&!window.confirm('放弃尚未保存的报告修改，恢复当前已保存正文？'))return;setDraft(text);setBase(text);setError('');}
+  function discard(){if(dirty&&!window.confirm('放弃尚未保存的报告修改，恢复当前已保存正文？'))return;backup.clear();setDraft(text);setBase(text);setError('');}
   async function save(e){
     e.preventDefault();if(busy||changed)return;setError('');
-    try{if(await onSave({report:{...report,id:'report',name:report.name||'结论草稿',text:draft,notes:[]}})){setBase(draft);}else setError('未能保存，输入已保留，请处理页面提示后重试。');}
+    try{if(await onSave({report:{...report,id:'report',name:report.name||'结论草稿',text:draft,notes:[]}})){backup.clear();setBase(draft);}else setError('未能保存，输入已保留，请处理页面提示后重试。');}
     catch{setError('未能保存，输入已保留，请重试。');}
   }
-  return <details className="quick-claim"><summary>编辑报告正文或补充结论{dirty?' · 尚未保存':''}</summary>
-    <form onSubmit={save}><label>待核对文字<textarea name="text" value={draft} onChange={e=>setDraft(e.target.value)} rows={8} maxLength={24000} required disabled={busy}/></label>
+  return <details ref={disclosure} className="quick-claim"><summary>编辑报告正文或补充结论{dirty?' · 尚未保存':''}</summary>
+    <DraftRecovery draft={backup} busy={busy}/><form onSubmit={save}><label>待核对文字<textarea name="text" value={draft} onChange={e=>setDraft(e.target.value)} rows={8} maxLength={24000} required disabled={busy}/></label>
       <p className="compact-note">接续当前正文与已采纳改写；保存后需再次核对，历史复核记录保留。</p>
       {changed&&dirty&&<p role="alert" className="inline-error">已保存正文发生变化。请先复制保留本次输入，再恢复当前正文重新编辑。</p>}
       {error&&<p role="alert" className="inline-error">{error}</p>}
