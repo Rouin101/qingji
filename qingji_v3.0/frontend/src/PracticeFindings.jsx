@@ -6,10 +6,11 @@ export function PracticeFindings({project, view, busy, onEdit, onMaterials, requ
   const [task,setTask]=useState('');
   const [query,setQuery]=useState('');
   const [record,setRecord]=useState('');
+  const [sourceStatus,setSourceStatus]=useState('');
   const details=useRef(null), heading=useRef(null);
   useEffect(()=>{
     if(!request)return;
-    setQuestion('');setTask(request.taskId||'');setQuery('');setRecord(request.observationId||'');
+    setQuestion('');setTask(request.taskId||'');setQuery('');setRecord(request.observationId||'');setSourceStatus('');
     if(details.current)details.current.open=true;
     const frame=requestAnimationFrame(()=>{heading.current?.focus({preventScroll:true});heading.current?.scrollIntoView({block:'center'});});
     return()=>cancelAnimationFrame(frame);
@@ -24,10 +25,13 @@ export function PracticeFindings({project, view, busy, onEdit, onMaterials, requ
     });return()=>cancelAnimationFrame(frame);
   },[record,request]);
   const sourceById=new Map(project.materials.map(m=>[m.id,m]));
+  const statusLoading=(sourceStatus==='attention'||sourceStatus==='changed') && !view;
+  const changed=new Set(view?.changed_observations||[]);
   const normalized=query.trim().toLocaleLowerCase();
   const visible=s.observations.filter(o=>{
     const m=sourceById.get(o.material_id);
-    return (!record||o.id===record) && (!question||o.question_id===question) && (!task||(task==='unlinked'?!o.task_id:o.task_id===task)) &&
+    const statusMatch=!sourceStatus || sourceStatus==='missing'&&!m || sourceStatus==='excluded'&&m?.enabled===false || sourceStatus==='changed'&&changed.has(o.id) || sourceStatus==='attention'&&(!m||changed.has(o.id));
+    return !statusLoading && statusMatch && (!record||o.id===record) && (!question||o.question_id===question) && (!task||(task==='unlinked'?!o.task_id:o.task_id===task)) &&
       (!normalized||[o.finding,o.uncertainty,m?.name,m?.text,m?.context].filter(Boolean).join(' ').toLocaleLowerCase().includes(normalized));
   });
   const tasks=project.tasks.filter(t=>t.kind==='practice'&&(!question||s.task_links[t.id]===question));
@@ -36,10 +40,11 @@ export function PracticeFindings({project, view, busy, onEdit, onMaterials, requ
     <div className="finding-filters">
       <label>实践问题<select aria-label="筛选记录问题" value={question} onChange={e=>{setRecord('');setQuestion(e.target.value);setTask('');}}><option value="">全部问题</option>{s.questions.map(q=><option key={q.id} value={q.id}>{q.text}</option>)}</select></label>
       <label>对应行动<select aria-label="筛选记录行动" value={task} onChange={e=>{setRecord('');setTask(e.target.value);}}><option value="">全部行动</option><option value="unlinked">未关联行动</option>{tasks.map(t=><option key={t.id} value={t.id}>{t.action}</option>)}</select></label>
-      <label className="finding-search">搜索记录<input type="search" aria-label="搜索阶段记录" value={query} onChange={e=>{setRecord('');setQuery(e.target.value);}} placeholder="发现、原文或材料名称"/></label>
+      <label>来源状态<select aria-label="筛选记录来源状态" value={sourceStatus} onChange={e=>{setRecord('');setSourceStatus(e.target.value);}}><option value="">全部状态</option><option value="attention">来源待核对</option><option value="changed">来源已修改</option><option value="missing">来源已移除</option><option value="excluded">材料已排除</option></select></label>
+      <label>搜索记录<input type="search" aria-label="搜索阶段记录" value={query} onChange={e=>{setRecord('');setQuery(e.target.value);}} placeholder="发现、原文或材料名称"/></label>
     </div>
-    <div className="finding-filter-result"><span role="status">显示 {visible.length} / {s.observations.length} 条记录</span>{(question||task||query||record)&&<button className="text-button" onClick={()=>{setRecord('');setQuestion('');setTask('');setQuery('');}}>清除筛选</button>}</div>
-    {!visible.length&&<p className="compact-note">{record?'这条记录已不在当前项目中，请清除筛选查看其他记录。':'没有符合当前筛选的记录，试试其他问题或关键词。'}</p>}
+    <div className="finding-filter-result"><span role="status">{statusLoading?'正在读取来源状态…':`显示 ${visible.length} / ${s.observations.length} 条记录`}</span>{(question||task||query||record||sourceStatus)&&<button className="text-button" onClick={()=>{setRecord('');setSourceStatus('');setQuestion('');setTask('');setQuery('');}}>清除筛选</button>}</div>
+    {!statusLoading&&!visible.length&&<p className="compact-note">{record?'这条记录已不在当前项目中，请清除筛选查看其他记录。':'没有符合当前筛选的记录，试试其他问题或关键词。'}</p>}
     {visible.map(o=>{const material=sourceById.get(o.material_id);const action=project.tasks.find(t=>t.id===o.task_id);return <article key={o.id} tabIndex={-1} data-observation-id={o.id}>
       <strong>{s.questions.find(q=>q.id===o.question_id)?.text}</strong>
       <p className="compact-note">{action?`对应行动：${action.action}`:'未关联具体行动'}{material?.enabled===false?' · 材料已排除':''}</p>
