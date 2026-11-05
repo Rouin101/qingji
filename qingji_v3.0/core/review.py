@@ -1,6 +1,7 @@
 """报告读取、原文定位与模型输出校验；不访问旧版数据或配置。"""
 
 from __future__ import annotations
+from core.material_limits import MAX_RUN_MATERIALS
 
 import io
 import json
@@ -169,6 +170,8 @@ def _validate_inputs(report: Document, materials: list[Document]) -> None:
         raise ReviewError("请先提交报告正文。")
     if len(report.text) > MAX_REPORT_CHARS:
         raise ReviewError("当前每次支持 24000 字以内的报告，请分段检查；不会自动截断正文。")
+    if len(materials) > MAX_RUN_MATERIALS:
+        raise ReviewError("本轮最多纳入 8 份材料，请到材料与来源调整范围；已保存材料不会删除。")
     if sum(len(d.text) for d in materials) > MAX_MATERIAL_CHARS:
         raise ReviewError("补充材料合计超过 48000 字，请减少材料或分次检查；不会自动截断。")
     ids = [report.id, *(d.id for d in materials)]

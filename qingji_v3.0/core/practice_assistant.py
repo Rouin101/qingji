@@ -1,5 +1,6 @@
 """社会实践补证计划：只提出待执行的问题，不产生已调查的事实。"""
 from __future__ import annotations
+from core.material_limits import MAX_STORED_MATERIALS, validate_scope
 
 import hashlib
 import json
@@ -69,7 +70,7 @@ def _selected_issue(project, issue_id):
 
 def _eligible_materials(project):
     materials=project.get("materials",[])
-    if not isinstance(materials,list) or len(materials)>8:
+    if not isinstance(materials,list) or len(materials)>MAX_STORED_MATERIALS:
         raise ReviewError("项目材料范围不完整。")
     selected=[]
     for material in materials:
@@ -81,6 +82,7 @@ def _eligible_materials(project):
             selected.append(material)
     if sum(len(m["text"]) for m in selected)>MAX_MATERIAL_CHARS:
         raise ReviewError("本次补证计划的材料总量超过处理范围，请减少材料后重新核验。")
+    validate_scope(selected)
     return selected
 
 

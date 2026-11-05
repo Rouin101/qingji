@@ -422,7 +422,7 @@ export function App() {
   }
 
   async function saveQuickRecord(material) {
-    if(!recordToEdit&&materials.length>=8)throw new Error("项目目前最多保存八份材料，可先整理现有记录。");
+    if(!recordToEdit&&materials.length>=100)throw new Error("项目最多保存 100 份材料。");
     setBusy(true);setError("");
     try {const next=recordToEdit?materials.map(m=>m.id===material.id?material:m):[...materials,material];
       const p=await persist({materials:next});setMaterials(p.materials.map(m=>({...m,consent_status:"confirmed"})));setFocusMaterial(material.id);setScreen("materials");setRecordToEdit(null);setToast("记录已保存，已纳入的内容可参与 AI 核对");}
@@ -597,7 +597,7 @@ export function App() {
 
   async function uploadMaterials(files) {
     if (!files.length || busy) return;
-    if (materials.length + files.length > 8) return setError("每次请提供不超过八份补充材料。");
+    if (materials.length + files.length > 100) return setError("项目最多保存 100 份材料。");
     setBusy(true); setError("");
     try {const added = await Promise.all(Array.from(files).map(readFile));const all=[...materials,...added.map(m=>({...m,id:"m"+crypto.randomUUID(),consent_status:"confirmed",enabled:true}))];if(projectRef.current){const p=await persist({materials:all});setMaterials(p.materials.map(m=>({...m,consent_status:"confirmed"})));setToast("材料已保存，纳入的内容将用于 AI 分析");}else setMaterials(all);}
     catch (e) {setError(e.message);} finally {setBusy(false); if (materialsInput.current) materialsInput.current.value = "";}
@@ -820,7 +820,7 @@ export function App() {
       <ProjectCards projects={projects} onOpen={openProject} onNew={newProject} onImport={()=>packageInput.current?.click()} onArchive={archiveProject} busy={busy}/>
       <footer className="home-footer">让实践有记录，让结论有依据。</footer>
     </main> : screen!=="review"&&project ? screen==="review-start" ? <ReviewStart onDraftChange={setPracticeDraft} project={project} materials={materials} busy={busy} onUpload={()=>reportInput.current?.click()} onSave={saveDetails} onStart={()=>recheck(true)}/> : screen==="materials" ?
-      <MaterialsPanel materials={materials} reviewMaterials={project.review_materials} result={result} tasks={project.tasks} focusMaterial={focusMaterial} onChange={(index,change)=>setMaterials(items=>items.map((m,i)=>i===index?{...m,...change}:m))}
+      <MaterialsPanel onScopeChange={ids=>setMaterials(items=>items.map(m=>({...m,enabled:ids.has(m.id)})))} lifecycle={project.lifecycle} materials={materials} reviewMaterials={project.review_materials} result={result} tasks={project.tasks} focusMaterial={focusMaterial} onChange={(index,change)=>setMaterials(items=>items.map((m,i)=>i===index?{...m,...change}:m))}
         onSave={()=>saveDetails({materials})} onUpload={()=>materialsInput.current?.click()} onQuickRecord={()=>openQuickRecord()} onEdit={openQuickRecord} onRemove={removeMaterial}
         onPreview={m=>setCitation({document_id:m.id,start:0,end:0,quote:"",live:true})} onPreviewCitation={c=>setCitation({...c,live:false})} onLocateIssue={locateIssue} onReview={()=>navigate("review")} onRecheck={()=>recheck(true)}
         hasReport={!!report?.text?.trim()} allowAI={allowAI} aiConfigured={status?.ai_configured} busy={busy} needsReview={project.needs_review}/>
