@@ -3,7 +3,7 @@ import {useEffect,useState} from 'react';
 import {PracticeReport} from './PracticeReport.jsx';
 import './question-workspace.css';
 
-export default function QuestionWorkspace({project,busy,hasDraft,onRecords,onRecord}){
+export default function QuestionWorkspace({project,busy,hasDraft,onRecords,onRecord,onCandidate}){
   const state=project.lifecycle;
   const [selected,setSelected]=useState('');
   const [view,setView]=useState(null),[error,setError]=useState('');
@@ -26,7 +26,7 @@ export default function QuestionWorkspace({project,busy,hasDraft,onRecords,onRec
     <details><summary>相关行动 · {tasks.length} 项</summary>{!tasks.length&&<p>尚未安排相关行动，可在行动与记录中添加并关联这个问题。</p>}<ul>{tasks.map(t=><li key={t.id}><p>{t.action}</p><small>{t.status==='done'?'团队已确认行动完成':'行动待推进'} · 行动状态不代表结论成立</small><div className="question-actions"><button className="text-button" disabled={busy} onClick={()=>onRecord({taskId:t.id})}>记下这项行动的记录</button><button className="text-button" onClick={()=>onRecords({taskId:t.id})}>查看行动记录</button></div></li>)}</ul></details>
     <details><summary>阶段发现与来源 · {records.length} 条</summary>{!records.length&&<p>尚无关联记录，暂不能据此判断这个问题。</p>}<ul>{records.map(o=><li key={o.id}><p>{o.finding||'尚未整理阶段发现'}</p><small>{status(o)}</small><div><button className="text-button" onClick={()=>onRecords({observationId:o.id})}>查看记录与原始来源</button></div></li>)}</ul></details>
     <details><summary>仍需了解的情况 · {records.filter(o=>o.uncertainty?.trim()).length} 条</summary><p className="compact-note">来自团队记录的疑问；没有填写不代表问题已经解决。</p><ul>{records.filter(o=>o.uncertainty?.trim()).map(o=><li key={o.id}><p>{o.uncertainty}</p><small>{status(o)}</small><div><button className="text-button" onClick={()=>onRecords({observationId:o.id})}>回到这条记录</button></div></li>)}</ul></details>
-    <QuestionSynthesis project={project} questionId={question.id} busy={busy} hasDraft={hasDraft} onRecords={onRecords}/>
+    <QuestionSynthesis onCandidate={onCandidate} project={project} questionId={question.id} busy={busy} hasDraft={hasDraft} onRecords={onRecords}/>
     <PracticeReport project={project} busy={busy} hasDraft={hasDraft} questionId={question.id}/>
   </section>;
 }

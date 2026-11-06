@@ -1,6 +1,7 @@
+import {candidateBlock} from './synthesis-draft.js';
 import {useEffect,useRef,useState} from 'react';
 
-export default function QuestionSynthesis({project,questionId,busy,hasDraft,onRecords}){
+export default function QuestionSynthesis({project,questionId,busy,hasDraft,onRecords,onCandidate}){
   const [result,setResult]=useState(null),[loading,setLoading]=useState(false),[error,setError]=useState('');
   const sequence=useRef(0),controller=useRef(null);
   useEffect(()=>{sequence.current++;controller.current?.abort();setResult(null);setError('');setLoading(false);},[project.id,project.version,questionId]);
@@ -16,6 +17,10 @@ export default function QuestionSynthesis({project,questionId,busy,hasDraft,onRe
       if(sequence.current===current){if(data.version!==project.version||data.question_id!==questionId)throw new Error('项目范围已变化，请重新生成。');setResult(data);}
     }catch(e){if(sequence.current===current&&e.name!=='AbortError')setError(e.message);}
     finally{if(sequence.current===current)setLoading(false);}
+  }
+  async function stage(group,item){
+    setError('');
+    try{await onCandidate(candidateBlock(project,result,group,item),result.version);}catch(e){setError(e.message);}
   }
   function download(){
     const lines=['青迹 · AI阶段分析候选',project.lifecycle.questions.find(q=>q.id===questionId)?.text,'尚未写入项目；引用存在不等于判断成立。',`项目版本：${result.version}`];
@@ -33,7 +38,7 @@ export default function QuestionSynthesis({project,questionId,busy,hasDraft,onRe
     {result&&<div className="synthesis-result">
       <p className="compact-note">AI 候选理解 · 引文已核对是否存在，含义仍需人工核对。结果仅在本页面暂存，刷新或切换问题后清空，可先下载留存。</p>
       {result.changed_sources&&<p role="status">部分来源后来有修改，原阶段发现需重新核对。</p>}
-      {Object.entries(labels).map(([key,label])=><details key={key} open><summary>{label}</summary>{!result.analysis[key].length&&<p>本次未形成有引用的条目，不代表没有其他情况。</p>}{result.analysis[key].map((item,i)=><article key={i}><p>{item.text}</p>{item.citations.map((c,j)=><blockquote key={j}><p>{c.quote}</p><button className="text-button" onClick={()=>onRecords({observationId:c.observation_id})}>核对原始记录</button></blockquote>)}</article>)}</details>)}
+      {Object.entries(labels).map(([key,label])=><details key={key} open><summary>{label}</summary>{!result.analysis[key].length&&<p>本次未形成有引用的条目，不代表没有其他情况。</p>}{result.analysis[key].map((item,i)=><article key={i}><p>{item.text}</p>{item.citations.map((c,j)=><blockquote key={j}><p>{c.quote}</p><button className="text-button" onClick={()=>onRecords({observationId:c.observation_id})}>核对原始记录</button></blockquote>)}<button className="secondary" disabled={busy||hasDraft} onClick={()=>stage(key,item)}>带入报告草稿</button></article>)}</details>)}
       <h4>本次分析的限制</h4><ul>{result.analysis.limits.map((x,i)=><li key={i}>{x}</li>)}</ul><button className="text-button" disabled={hasDraft||busy} onClick={download}>下载分析候选</button>
     </div>}
   </section>;
