@@ -4,3 +4,5 @@
 .question-workspace>details{border-top:1px solid #e5dcf4;padding:16px 0}.question-workspace summary{cursor:pointer}
 .question-workspace ul{list-style:none;padding:0}.question-workspace li{padding:12px 0}.question-workspace p{line-height:1.7;overflow-wrap:anywhere}
 .question-workspace small{color:#706780}
+
+.question-synthesis{border-top:1px solid #e5dcf4;padding:20px 0}.question-synthesis blockquote{margin:12px 0;padding:8px 16px;border-left:3px solid #b39bd6;background:#f8f5fc}.question-synthesis article{padding:12px 0}.question-synthesis [role=alert]{color:#9b4028}

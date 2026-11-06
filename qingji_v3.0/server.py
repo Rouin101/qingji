@@ -177,6 +177,22 @@ def answer_question(body: dict) -> dict:
     return {"answer": answer, "mode": mode, "label": label}
 
 
+def question_analysis(body):
+    from core.question_synthesis import synthesize
+    project_id=body.get('project_id')
+    if not isinstance(project_id,str) or not project_id or len(project_id)>80:
+        raise ReviewError('项目标识不完整。')
+    p=STORE.get(project_id)
+    if type(body.get('version')) is not int or body['version']!=p['version']:
+        raise ProjectConflict('项目资料已更新，请重新打开后分析。')
+    if p.get('archived'):
+        raise ReviewError('请先恢复进行中的项目再生成分析。')
+    result=synthesize(p,body.get('question_id'),configured_completion)
+    if STORE.get(project_id)['version']!=p['version']:
+        raise ProjectConflict('分析期间项目已更新，本次结果不再适用，请重新生成。')
+    return result
+
+
 def project_action(body):
     action=body.get("action")
     actor=body.get("actor", "")
@@ -419,6 +435,8 @@ class Handler(BaseHTTPRequestHandler):
                     result = {"result": preliminary_review(report, materials).to_dict(), "materials": [asdict(d) for d in materials]}
                 else:
                     raise ReviewError("不支持该检查方式。")
+            elif route == "/api/question-synthesis":
+                result = question_analysis(body)
             elif route == "/api/chat":
                 result = answer_question(body)
             elif route == "/api/plan":
