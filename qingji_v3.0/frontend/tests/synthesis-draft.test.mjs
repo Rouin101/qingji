@@ -10,6 +10,7 @@ test('candidate includes source identifiers, quote and limits without changing r
  assert.equal(appendCandidate('',block),block);
 });
 test('old versions and changed source scope cannot be staged',()=>{
+ assert.throws(()=>candidateBlock(project,{...result,current:false},'findings',item));
  assert.throws(()=>candidateBlock({...project,version:3},result,'findings',item));
  assert.throws(()=>candidateBlock({...project,materials:[]},result,'findings',item));
  assert.throws(()=>candidateBlock(project,result,'findings',{...item}));

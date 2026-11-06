@@ -21,7 +21,7 @@ from core.projects import document, material_list, now, text
 from core.review import CATEGORIES, MAX_REPORT_CHARS, ReviewError
 
 PACKAGE_FORMAT = "qingji-project"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 MAX_PACKAGE_BYTES = 12 * 1024 * 1024
 MAX_REVISIONS = 100
 IMPORT_WARNING = "外部交接副本；历史判断未在本机复核，请重新确认材料授权并复查。"
@@ -311,7 +311,7 @@ def _import_metadata(value):
 
 def _validated_payload(payload):
     _object(payload, "项目内容")
-    if set(payload) != {"project", "revisions"}:
+    if set(payload) not in ({"project", "revisions"},{"project", "revisions", "analyses"}):
         raise ReviewError("交接项目的内容结构不完整。")
     source = migrate(copy.deepcopy(_object(payload["project"], "项目")))
     project = {key: source[key] for key in PROJECT_FIELDS if key in source}
@@ -401,7 +401,14 @@ def _validated_payload(payload):
     if 'lifecycle' in source:
         from core.lifecycle import validate_state
         project['lifecycle']=validate_state(source['lifecycle'],project)
-    return {"project": project, "revisions": validated}
+    result={"project": project, "revisions": validated}
+    if 'analyses' in payload:
+        from core.analysis_history import validate_snapshot,MAX_ANALYSES
+        rows=payload['analyses']
+        if not isinstance(rows,list) or len(rows)>MAX_ANALYSES:raise ReviewError('交接阶段分析数量无效。')
+        result['analyses']=[validate_snapshot(row) for row in rows]
+        if len({row['id'] for row in result['analyses']})!=len(rows):raise ReviewError('交接阶段分析标识重复。')
+    return result
 
 
 def _checked_payload(payload):
@@ -430,8 +437,9 @@ def export_package(store, project_id):
         project = migrate(json.loads(row[0]))
         # 白名单阻止服务配置或未来无关字段随数据库对象进入交接包。
         project = {key: value for key, value in project.items() if key in PROJECT_FIELDS}
-        payload = _checked_payload({"project": project, "revisions": revisions})
-        package = {"format": PACKAGE_FORMAT, "schema_version": SCHEMA_VERSION, "exported_at": now(),
+        snapshots=[json.loads(row[0]) for row in db.execute('SELECT data FROM analyses WHERE project_id=? ORDER BY rowid',(project_id,))]
+        payload = _checked_payload({"project": project, "revisions": revisions,**({'analyses':snapshots} if snapshots else {})})
+        package = {"format": PACKAGE_FORMAT, "schema_version": SCHEMA_VERSION if snapshots else 2, "exported_at": now(),
                    "payload": payload, "sha256": hashlib.sha256(_json_bytes(payload)).hexdigest()}
         if len(_json_bytes(package)) > MAX_PACKAGE_BYTES:
             raise ReviewError("完整交接内容超过12 MB，当前不能生成交接文件；原记录仍保留。")
@@ -447,12 +455,15 @@ def import_package(store, package, actor=""):
         raise ReviewError("交接文件请控制在12 MB以内。")
     if set(package) != {"format", "schema_version", "exported_at", "payload", "sha256"}:
         raise ReviewError("交接文件结构不完整。")
-    if package["format"] != PACKAGE_FORMAT or type(package["schema_version"]) is not int or package["schema_version"] not in {1, SCHEMA_VERSION}:
+    if package["format"] != PACKAGE_FORMAT or type(package["schema_version"]) is not int or package["schema_version"] not in {1, 2, SCHEMA_VERSION}:
         raise ReviewError("不支持这个交接文件版本。")
     _timestamp(package["exported_at"], "交接导出时间")
     digest = _digest(package["sha256"], "完整性校验值")
     if digest != hashlib.sha256(_json_bytes(package["payload"])).hexdigest():
         raise ReviewError("交接文件完整性校验失败，请使用完整原文件；校验值不认证来源。")
+    _object(package['payload'], '项目内容')
+    if ('analyses' in package['payload']) != (package['schema_version']==3):
+        raise ReviewError('交接分析历史与包版本不匹配。')
     payload = _checked_payload(package["payload"])
     project = payload["project"]
     if package['schema_version']==1 and 'lifecycle' in project:
@@ -488,6 +499,9 @@ def import_package(store, package, actor=""):
             entry = revision["data"]
             entry["imported_unverified"] = True
             db.execute("INSERT INTO revisions VALUES (?,?,?,?)", (uuid.uuid4().hex, project["id"], revision["created_at"], json.dumps(entry, ensure_ascii=False)))
+        for snapshot in payload.get('analyses',[]):
+            snapshot.update(id=uuid.uuid4().hex,imported=True)
+            db.execute('INSERT INTO analyses VALUES (?,?,?)',(snapshot['id'],project['id'],json.dumps(snapshot,ensure_ascii=False)))
         db.commit()
     except sqlite3.IntegrityError as exc:
         db.rollback()

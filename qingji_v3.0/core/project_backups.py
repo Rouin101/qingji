@@ -33,7 +33,7 @@ def create_backup(store, project_id, version):
     with closing(connect(store)) as db, db:
         db.execute('BEGIN IMMEDIATE')
         # Repeated clicks cannot consume slots for the same project version.
-        existing = db.execute('SELECT id FROM backups WHERE project_id=? AND version=?', (project_id,version)).fetchone()
+        existing = any(json.loads(row[0]).get('sha256')==package['sha256'] for row in db.execute('SELECT data FROM backups WHERE project_id=? AND version=?', (project_id,version)))
         if not existing:
             if db.execute('SELECT COUNT(*) FROM backups WHERE project_id=?', (project_id,)).fetchone()[0] >= MAX_BACKUPS:
                 raise ReviewError('每个项目最多保留 20 份本机备份；请先下载并删除不再需要的备份。')

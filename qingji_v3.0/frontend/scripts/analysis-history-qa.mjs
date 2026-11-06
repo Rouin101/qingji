@@ -1,0 +1,19 @@
+import assert from 'node:assert/strict';
+import {chromium} from 'playwright-core';
+import {mkdir,readFile,writeFile} from 'node:fs/promises';
+const base='http://127.0.0.1:8785',out='../design/iterations/2026-11-06/history',seed=JSON.parse(await readFile(out+'/seed.json','utf8'));await mkdir(out,{recursive:true});
+const b=await chromium.launch({executablePath:'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',headless:true}),ctx=await b.newContext({viewport:{width:1440,height:1000}}),page=await ctx.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));page.on('dialog',d=>d.accept());
+async function api(data){const r=await ctx.request.post(base+'/api/projects',{data});const p=await r.json();assert(r.ok(),p.error);return p;}
+async function get(path){return(await ctx.request.get(base+path)).json();}
+async function open(name){await page.goto(base);await page.locator('.project-tile').filter({has:page.getByText(name,{exact:true})}).first().click();await page.getByRole('button',{name:'项目概览',exact:true}).click();}
+const panel=page.getByRole('region',{name:'AI阶段分析'});
+try{
+await open(seed.name);await panel.getByText('第二轮候选',{exact:true}).waitFor();assert(!(await panel.getByRole('button',{name:'带入报告草稿'}).isDisabled()));await open(seed.name);await panel.getByText('第二轮候选',{exact:true}).waitFor();
+await panel.locator('.synthesis-history summary').click();assert.equal(await panel.getByRole('button',{name:'查看这次分析'}).count(),2);await panel.getByRole('button',{name:'查看这次分析'}).last().click();await panel.getByText('第一轮候选',{exact:true}).waitFor();await panel.locator('summary').filter({hasText:'查看分析时的来源快照'}).click();await panel.getByText('甲在最后一步需要帮助。',{exact:true}).first().waitFor();
+const dl=page.waitForEvent('download');await panel.getByRole('button',{name:'下载分析候选'}).click();assert((await readFile(await(await dl).path(),'utf8')).includes('第一轮候选'));
+let p=await get('/api/project?id='+seed.id);p=await api({action:'save',id:p.id,version:p.version,changes:{materials:p.materials.map(m=>({...m,text:'改过的当前原文。'}))}});await open(seed.name);await panel.getByText('这份分析的来源范围已变化，或来自交接副本；仅供回看，请重新生成后再带入报告或安排新行动。').waitFor();assert(await panel.getByRole('button',{name:'带入报告草稿'}).isDisabled());await panel.locator('summary').filter({hasText:'查看分析时的来源快照'}).click();assert((await panel.innerText()).includes('甲在最后一步需要帮助。'));
+const pack=await get('/api/package?id='+seed.id);assert.equal(pack.schema_version,3);const restored=await api({action:'import',package:pack});await open(restored.name);await panel.getByText('第二轮候选',{exact:true}).waitFor();await panel.locator('.synthesis-history summary').click();await panel.getByText(/外部历史，未在本机复核/).first().waitFor();assert(await panel.getByRole('button',{name:'带入报告草稿'}).isDisabled());
+for(const width of [390,768,1440]){await page.setViewportSize({width,height:1000});assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));await panel.screenshot({path:out+'/history-'+width+'.png'});}
+await panel.getByRole('button',{name:'删除这次分析'}).first().click();await page.waitForFunction(()=>document.querySelector('.synthesis-history summary')?.textContent.includes('1 次'));assert.equal((await get('/api/analyses?id='+seed.id+'&question_id=q1')).history.length,2);assert.equal((await get('/api/analyses?id='+restored.id+'&question_id=q1')).history.length,1);
+assert.equal((await get('/api/project?id='+restored.id)).version,restored.version);assert.deepEqual(errors,[]);const result={status:'passed',seeded_validated_snapshots:true,checks:['重开自动读取最近分析','历史切换','来源快照和下载','来源修改后仅回看','包导入保留且不恢复有效性','指定副本删除隔离','历史操作不修改报告版本','390/768/1440布局'],errors};await writeFile(out+'/results.json',JSON.stringify(result,null,2));console.log(JSON.stringify(result));
+}catch(e){await page.screenshot({path:out+'/failure.png',fullPage:true});console.error(e);process.exitCode=1;}finally{await b.close();}
