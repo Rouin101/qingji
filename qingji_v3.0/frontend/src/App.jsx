@@ -1,3 +1,4 @@
+import BackupLibrary from './BackupLibrary.jsx';
 import {useLocalDraft,DraftRecovery} from './LocalDraft.jsx';
 import {draftText} from './draft-storage.js';
 import {ReviewStart} from "./ReviewStart.jsx";
@@ -450,6 +451,20 @@ export function App() {
     }catch(e){setError(e.message);}finally{setBusy(false);}
   }
 
+  async function libraryAction(action,item){
+    if(busy||operationRef.current||mutationOperation.current)throw new Error('请等待当前操作完成。');
+    if(action==='restore'&&showPaste&&paste.trim()&&!window.confirm('首页有未提交的报告文字，离开前请确认已另存。继续恢复副本？'))return;
+    mutationOperation.current=true;setBusy(true);
+    try{
+      if(action==='download'){
+        const data=await request(`/api/backup?id=${encodeURIComponent(item.project_id)}&backup_id=${encodeURIComponent(item.id)}`);
+        downloadText(`${item.name}_版本${item.version}.qingji.json`,JSON.stringify(data),'application/json;charset=utf-8');return;
+      }
+      const data=await request('/api/projects',{action:'backup_'+action,id:item.project_id,backup_id:item.id,actor:actorName});
+      if(action==='restore'){acceptProject(data);setToast('已从本机备份恢复独立副本，请检查材料范围并复查。');}
+    }finally{mutationOperation.current=false;setBusy(false);}
+  }
+
   async function backupAction(action,item) {
     if(busy||operationRef.current)throw new Error("请等待当前保存完成。");
     const id=projectRef.current.id;
@@ -836,6 +851,7 @@ export function App() {
         </div><button className="example-link" onClick={openExample} disabled={busy}><Icon as={IconArrowUpRight}/>看看一份审阅示例</button>
       </section>
       <ProjectCards projects={projects} onOpen={openProject} onNew={newProject} onImport={()=>packageInput.current?.click()} onArchive={archiveProject} busy={busy}/>
+      <BackupLibrary busy={busy} onAction={libraryAction}/>
       <footer className="home-footer">让实践有记录，让结论有依据。</footer>
     </main> : screen!=="review"&&project ? screen==="review-start" ? <ReviewStart onDraftChange={setPracticeDraft} project={project} materials={materials} busy={busy} onUpload={()=>reportInput.current?.click()} onSave={saveDetails} onStart={()=>recheck(true)}/> : screen==="materials" ?
       <MaterialsPanel onScopeChange={ids=>setMaterials(items=>items.map(m=>({...m,enabled:ids.has(m.id)})))} lifecycle={project.lifecycle} materials={materials} reviewMaterials={project.review_materials} result={result} tasks={project.tasks} focusMaterial={focusMaterial} onChange={(index,change)=>setMaterials(items=>items.map((m,i)=>i===index?{...m,...change}:m))}

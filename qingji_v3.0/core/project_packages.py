@@ -448,8 +448,8 @@ def export_package(store, project_id):
         db.close()
 
 
-def import_package(store, package, actor=""):
-    """全部验证通过后一次事务写入新项目；任何失败都不覆盖现有项目。"""
+def validate_package(package):
+    """Validate a complete package without creating or changing any project."""
     _object(package, "交接文件")
     if len(_json_bytes(package)) > MAX_PACKAGE_BYTES:
         raise ReviewError("交接文件请控制在12 MB以内。")
@@ -465,9 +465,15 @@ def import_package(store, package, actor=""):
     if ('analyses' in package['payload']) != (package['schema_version']==3):
         raise ReviewError('交接分析历史与包版本不匹配。')
     payload = _checked_payload(package["payload"])
-    project = payload["project"]
-    if package['schema_version']==1 and 'lifecycle' in project:
+    if package['schema_version']==1 and 'lifecycle' in payload['project']:
         raise ReviewError('1版交接文件不包含3.0实践指导，请使用完整3.0项目包。')
+    return payload
+
+
+def import_package(store, package, actor=""):
+    """全部验证通过后一次事务写入新项目；任何失败都不覆盖现有项目。"""
+    payload=validate_package(package)
+    project=payload["project"]
     source_id, source_name = project["id"], project["name"]
     stamp = now()
     project["imported_from"] = {"project_id": source_id, "project_name": source_name,

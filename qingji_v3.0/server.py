@@ -343,12 +343,20 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {"ai_configured": ai_configured(), "app": "qingji-v3", "formats": ["docx", "pdf", "txt", "md"]})
         if route == "/api/example":
             return self._json(200, example_result())
-        if route in {"/api/analyses", "/api/backups", "/api/backup", "/api/projects", "/api/project", "/api/revision", "/api/package", "/api/delivery", "/api/practice", "/api/practice-report"}:
+        if route in {"/api/backup-library", "/api/backup-preview", "/api/analyses", "/api/backups", "/api/backup", "/api/projects", "/api/project", "/api/revision", "/api/package", "/api/delivery", "/api/practice", "/api/practice-report"}:
             try:
                 args=parse_qs(urlsplit(self.path).query)
                 if route=="/api/projects":
                     return self._json(200,{"projects":STORE.list()})
                 project_id=args.get("id",[""])[0]
+                if route=="/api/backup-library":
+                    from core.project_backups import backup_library
+                    page=args.get('page',['0'])[0]
+                    if not page.isascii() or not page.isdecimal() or len(page)>5:raise ReviewError('备份页码无效。')
+                    return self._json(200,backup_library(STORE,args.get('q',[''])[0],int(page)))
+                if route=="/api/backup-preview":
+                    from core.project_backups import preview_backup
+                    return self._json(200,preview_backup(STORE,project_id,args.get('backup_id',[''])[0]))
                 if route=="/api/analyses":
                     from core.analysis_history import history
                     return self._json(200,history(STORE,project_id,args.get("question_id",[""])[0]))
