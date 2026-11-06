@@ -101,6 +101,17 @@ function RevisionDiscussion({comments = [], previous = false}) {
 }
 
 export function ProjectOverview({project, result, onSave, onUpload, onReview, onMaterials, onRecheck, onTask, onLocate, onRevision, revision, revisionLoading, allowAI, onAllowAI, aiConfigured, busy, onMembers, onTaskDetail, onCreateTask, onComment, onArchive, onPackage, actor, onActor, onQuickRecord, hasEdits, deliveryCheck, onPractice, onDraftChange, hasPracticeDraft, reportRequest, currentReport, onReportDraftRestored, onBackup}) {
+  const [candidateRequest,setCandidateRequest]=useState(null),[candidatePending,setCandidatePending]=useState(false);
+  async function stageCandidate(block,version){
+    if(busy||candidatePending||hasPracticeDraft||hasEdits)throw new Error('请先保存当前输入，再带入候选。');
+    setCandidatePending(true);
+    try{
+      const response=await fetch('/api/project?id='+encodeURIComponent(project.id));
+      const current=await response.json();if(!response.ok)throw new Error(current.error||'无法核对当前项目版本。');
+      if(current.version!==version)throw new Error('项目已在其他窗口更新，请重新打开并重新生成分析。');
+      setCandidateRequest({block,version,sequence:Date.now()});setSection('overview');
+    }finally{setCandidatePending(false);}
+  }
   const [reportDirty,setReportDirty]=useState(false),[lifecycleDirty,setLifecycleDirty]=useState(false);
   useEffect(()=>{onDraftChange?.(reportDirty||lifecycleDirty);},[reportDirty,lifecycleDirty,onDraftChange]);
   useEffect(()=>()=>onDraftChange?.(false),[onDraftChange]);
@@ -283,14 +294,14 @@ export function ProjectOverview({project, result, onSave, onUpload, onReview, on
     </div>
     {onPractice && <div hidden={section==='overview'}><LifecyclePlanner reportDraft={reportDirty} findingsRequest={findingsRequest} recordRequest={recordRequest} key={project.id} section={section} onDraftChange={setLifecycleDirty} project={project} onAction={async(action,values)=>{const p=await onPractice(action,values);if(action==='practice_report')setSection('overview');return p;}} busy={busy || archived(project)} aiConfigured={aiConfigured} onMaterials={onMaterials}/></div>}
     <div hidden={section!=="overview"}>
-    <QuestionWorkspace project={project} busy={busy||archived(project)} hasDraft={hasPracticeDraft||hasEdits} onRecord={target=>{setSection("actions");setRecordRequest({...target,sequence:Date.now()});}} onRecords={target=>{setSection("actions");setFindingsRequest({...target,sequence:Date.now()});}}/>
+    <QuestionWorkspace onCandidate={stageCandidate} project={project} busy={busy||candidatePending||archived(project)} hasDraft={hasPracticeDraft||hasEdits} onRecord={target=>{setSection("actions");setRecordRequest({...target,sequence:Date.now()});}} onRecords={target=>{setSection("actions");setFindingsRequest({...target,sequence:Date.now()});}}/>
     <details className="project-settings"><summary>项目名称与简介</summary><form onSubmit={event => {event.preventDefault();const fields = new FormData(event.currentTarget);onSave({name: fields.get("name"), description: fields.get("description")});}}><label>项目名称<input name="name" defaultValue={project.name} maxLength={200} required disabled={busy}/></label><label>实践主题、地点与对象<textarea name="description" defaultValue={project.description} maxLength={2000} rows={3} disabled={busy}/></label><button className="secondary" disabled={busy}>保存项目信息</button></form></details>
     <section className="project-report-card">
       <div className="report-card-heading"><span className="report-card-icon"><IconFileText size={24}/></span><div><h2>报告与结论</h2><p>{project.report.text ? project.report.name : "上传报告，或粘贴准备核对的文字。"}</p></div></div>
       {project.needs_review && <p className="material-change-note compact-change-note">{result ? "资料已变化，请复查当前依据。" : "报告已准备好，可以开始核对。"}</p>}
       <div className="project-primary-actions"><button className="primary" onClick={onRecheck} disabled={busy || reportDirty || !project.report.text.trim()}>{busy ? "正在核对…" : "用 AI 核对当前资料"}</button>{result && <button className="secondary" onClick={onReview} disabled={busy}>查看结论</button>}<button className="text-button" onClick={onUpload} disabled={busy||reportDirty}>{project.report.text ? "更换报告" : "上传报告"}</button></div>
       <ProcessingConsent/>
-      <ReportDraft recoveryRequest={reportRequest?.draftText!==undefined?reportRequest:null} onRecoveryHandled={onReportDraftRestored} projectId={project.id} version={project.version} report={currentReport||project.report} text={(currentReport||project.report).text} busy={busy||archived(project)} onSave={onSave} onDirty={setReportDirty}/>
+      <ReportDraft candidateRequest={candidateRequest} onCandidateHandled={()=>setCandidateRequest(null)} recoveryRequest={reportRequest?.draftText!==undefined?reportRequest:null} onRecoveryHandled={onReportDraftRestored} projectId={project.id} version={project.version} report={currentReport||project.report} text={(currentReport||project.report).text} busy={busy||archived(project)} onSave={onSave} onDirty={setReportDirty}/>
     </section>
     {deliveryCheck}
     </div>

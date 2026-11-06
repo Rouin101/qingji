@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build && node scripts/prepare-sites-build.mjs",
     "preview": "vite preview",
-    "test": "node --test tests/review-state.test.mjs tests/project-conflicts.test.mjs tests/export-delivery-status.test.mjs tests/review-filter.test.mjs tests/task-filter.test.mjs tests/evidence-feedback.test.mjs tests/material-citations.test.mjs tests/draft-storage.test.mjs",
+    "test": "node --test tests/review-state.test.mjs tests/project-conflicts.test.mjs tests/export-delivery-status.test.mjs tests/review-filter.test.mjs tests/task-filter.test.mjs tests/evidence-feedback.test.mjs tests/material-citations.test.mjs tests/draft-storage.test.mjs tests/synthesis-draft.test.mjs",
     "test:sites": "node --test tests/sites-worker.test.mjs"
   },
   "dependencies": {

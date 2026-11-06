@@ -1,0 +1,22 @@
+import assert from 'node:assert/strict';
+import {chromium} from 'playwright-core';
+import {mkdir,writeFile} from 'node:fs/promises';
+const base='http://127.0.0.1:8783',out='../design/iterations/2026-11-06/synthesis-draft';await mkdir(out,{recursive:true});
+const b=await chromium.launch({executablePath:'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',headless:true}),ctx=await b.newContext({viewport:{width:1440,height:1000}}),page=await ctx.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));page.on('dialog',d=>d.accept());
+async function api(data){const r=await ctx.request.post(base+'/api/projects',{data});const p=await r.json();assert(r.ok(),p.error);return p;}
+let p;
+async function current(){return(await ctx.request.get(base+'/api/project?id='+p.id)).json();}
+async function open(){await page.goto(base);await page.locator('.project-tile').filter({hasText:p.name}).click();await page.getByRole('button',{name:'项目概览',exact:true}).click();}
+const panel=page.getByRole('region',{name:'AI阶段分析'}),form=page.locator('.quick-claim');
+async function generate(){await panel.getByRole('button',{name:'用 AI 整理阶段发现'}).click();await panel.getByRole('button',{name:'带入报告草稿'}).waitFor();}
+try{
+p=await api({action:'create',name:'虚构候选带入-'+Date.now(),report:{text:'作者已有正文。'}});p=await api({action:'practice_brief',id:p.id,version:p.version,brief:{topic:p.name,goal:'了解情况'},questions:[{id:'q1',text:'有何困难？'}],stage:'field'});p=await api({action:'practice_observation',id:p.id,version:p.version,observation:{question_id:'q1',text:'甲表示需要帮助。',consent_status:'confirmed'}});
+await page.route('**/api/question-synthesis',r=>{const o=p.lifecycle.observations[0];return r.fulfill({status:200,contentType:'application/json',body:JSON.stringify({version:p.version,question_id:'q1',analysis:{findings:[{text:'仅一次求助经历',citations:[{observation_id:o.id,material_id:o.material_id,quote:'甲表示需要帮助。'}]}],differences:[],questions:[],limits:['不能代表总体']}})});});
+await open();await generate();await panel.getByRole('button',{name:'带入报告草稿'}).click();await form.getByText('草稿已备份到此浏览器，尚未保存到项目。恢复不会自动调用 AI。',{exact:true}).waitFor();const draft=await form.locator('textarea').inputValue();for(const part of ['作者已有正文。','待核对的 AI 候选','甲表示需要帮助。','不能代表总体'])assert(draft.includes(part));assert.equal((await current()).version,p.version);assert(await panel.getByRole('button',{name:'带入报告草稿'}).isDisabled());
+await open();await form.locator('summary').first().click();await form.getByRole('button',{name:'恢复这份草稿'}).click();assert.equal(await form.locator('textarea').inputValue(),draft);
+await page.route('**/api/projects',r=>r.request().method()==='POST'?r.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'虚构保存失败'})}):r.continue());await form.getByRole('button',{name:'保存待核对文字'}).click();await form.getByText('未能保存，输入已保留，请处理页面提示后重试。').waitFor();assert.equal(await form.locator('textarea').inputValue(),draft);await page.unroute('**/api/projects');await form.getByRole('button',{name:'保存待核对文字'}).click();await page.waitForFunction(()=>!document.querySelector('.quick-claim summary').textContent.includes('尚未保存'));p=await current();assert.equal(p.report.text,draft);assert(p.needs_review);
+await generate();p=await api({action:'save',id:p.id,version:p.version,changes:{description:'另一个窗口更新'}});await panel.getByRole('button',{name:'带入报告草稿'}).click();await panel.getByRole('alert').filter({hasText:'项目已在其他窗口更新'}).waitFor();assert.equal((await current()).report.text,draft);
+p=await api({action:'save',id:p.id,version:p.version,changes:{report:{text:'甲'.repeat(23995)}}});await open();await generate();await panel.getByRole('button',{name:'带入报告草稿'}).click();await form.getByRole('alert').filter({hasText:'不会截断内容'}).waitFor();assert.equal((await form.locator('textarea').inputValue()).length,23995);assert.equal((await current()).version,p.version);
+for(const width of [390,768,1440]){await page.setViewportSize({width,height:1000});assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));await form.screenshot({path:out+'/draft-'+width+'.png'});}
+assert.deepEqual(errors,[]);const result={status:'passed',mocked_analysis:true,checks:['正文保留与完整候选引用','带入不写项目','防重复与未保存输入保护','浏览器恢复','保存失败保留与成功待复查','跨窗口版本拒绝','超限拒绝不截断','三种屏宽'],errors};await writeFile(out+'/results.json',JSON.stringify(result,null,2));console.log(JSON.stringify(result));
+}catch(e){await page.screenshot({path:out+'/failure.png',fullPage:true});console.error(e);process.exitCode=1;}finally{await b.close();}

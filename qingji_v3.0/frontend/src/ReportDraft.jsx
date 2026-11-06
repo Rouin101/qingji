@@ -1,13 +1,24 @@
+import {appendCandidate} from './synthesis-draft.js';
 import {useLocalDraft,DraftRecovery} from './LocalDraft.jsx';
 import {draftText} from './draft-storage.js';
 import {useEffect,useState,useRef} from 'react';
 
-export function ReportDraft({report,text,busy,onSave,onDirty,projectId,version,recoveryRequest,onRecoveryHandled}){
+export function ReportDraft({report,text,busy,onSave,onDirty,projectId,version,recoveryRequest,onRecoveryHandled,candidateRequest,onCandidateHandled}){
   const [draft,setDraft]=useState(text),[base,setBase]=useState(text),[error,setError]=useState('');
   const disclosure=useRef(null);
   useEffect(()=>{if(!recoveryRequest)return;setDraft(recoveryRequest.draftText);setBase(text);if(disclosure.current)disclosure.current.open=true;onRecoveryHandled?.();},[recoveryRequest]);
   const dirty=draft!==base;
   const changed=text!==base;
+  useEffect(()=>{
+    if(!candidateRequest)return;
+    if(disclosure.current)disclosure.current.open=true;
+    try{
+      if(dirty||changed||candidateRequest.version!==version)throw new Error('当前正文或草稿已有变化，请保留输入并重新选择候选。');
+      setDraft(appendCandidate(text,candidateRequest.block));setBase(text);setError('');
+    }catch(e){setError(e.message);}
+    onCandidateHandled?.();
+    const input=disclosure.current?.querySelector('textarea');input?.focus({preventScroll:true});input?.scrollIntoView({block:'center'});
+  },[candidateRequest]);
   const backup=useLocalDraft({projectId,kind:'report',version,value:{text:draft},dirty,onRestore:v=>{setDraft(draftText(v,'text','',24000));setBase(text);}});
   useEffect(()=>{if(!dirty){setDraft(text);setBase(text);}},[text,dirty]);
   useEffect(()=>{onDirty(dirty);},[dirty,onDirty]);
