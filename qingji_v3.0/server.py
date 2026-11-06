@@ -195,6 +195,16 @@ def project_action(body):
     version=body.get("version")
     if not isinstance(project_id,str) or len(project_id)>80:
         raise ReviewError("项目标识不完整。")
+    if action in {"backup_create", "backup_restore", "backup_delete"}:
+        from core import project_backups
+        if action == "backup_create":
+            return {"backups": project_backups.create_backup(STORE, project_id, version)}
+        backup_id = body.get("backup_id")
+        if not isinstance(backup_id, str) or len(backup_id) > 80:
+            raise ReviewError("备份标识不完整。")
+        if action == "backup_restore":
+            return project_backups.restore_backup(STORE, project_id, backup_id, actor)
+        return {"backups": project_backups.delete_backup(STORE, project_id, backup_id)}
     if action=="save":
         changes=body.get("changes")
         if not isinstance(changes,dict):
@@ -309,12 +319,17 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {"ai_configured": ai_configured(), "app": "qingji-v3", "formats": ["docx", "pdf", "txt", "md"]})
         if route == "/api/example":
             return self._json(200, example_result())
-        if route in {"/api/projects", "/api/project", "/api/revision", "/api/package", "/api/delivery", "/api/practice", "/api/practice-report"}:
+        if route in {"/api/backups", "/api/backup", "/api/projects", "/api/project", "/api/revision", "/api/package", "/api/delivery", "/api/practice", "/api/practice-report"}:
             try:
                 args=parse_qs(urlsplit(self.path).query)
                 if route=="/api/projects":
                     return self._json(200,{"projects":STORE.list()})
                 project_id=args.get("id",[""])[0]
+                if route in {"/api/backups", "/api/backup"}:
+                    from core import project_backups
+                    if route == "/api/backups":
+                        return self._json(200, {"backups": project_backups.list_backups(STORE, project_id)})
+                    return self._json(200, project_backups.read_backup(STORE, project_id, args.get("backup_id", [""])[0]))
                 if route=='/api/practice-report':
                     from core.lifecycle import report_outline
                     expected=args.get('version',[''])[0]

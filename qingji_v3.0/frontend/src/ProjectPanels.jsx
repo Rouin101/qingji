@@ -1,3 +1,4 @@
+import ProjectBackups from './ProjectBackups.jsx';
 import {MaterialScope,materialBudget} from './MaterialScope.jsx';
 import {ReportDraft} from './ReportDraft.jsx';
 import {FieldworkArt} from "./FieldworkArt.jsx";
@@ -98,7 +99,7 @@ function RevisionDiscussion({comments = [], previous = false}) {
   </details>;
 }
 
-export function ProjectOverview({project, result, onSave, onUpload, onReview, onMaterials, onRecheck, onTask, onLocate, onRevision, revision, revisionLoading, allowAI, onAllowAI, aiConfigured, busy, onMembers, onTaskDetail, onCreateTask, onComment, onArchive, onPackage, actor, onActor, onQuickRecord, hasEdits, deliveryCheck, onPractice, onDraftChange, hasPracticeDraft, reportRequest, currentReport, onReportDraftRestored}) {
+export function ProjectOverview({project, result, onSave, onUpload, onReview, onMaterials, onRecheck, onTask, onLocate, onRevision, revision, revisionLoading, allowAI, onAllowAI, aiConfigured, busy, onMembers, onTaskDetail, onCreateTask, onComment, onArchive, onPackage, actor, onActor, onQuickRecord, hasEdits, deliveryCheck, onPractice, onDraftChange, hasPracticeDraft, reportRequest, currentReport, onReportDraftRestored, onBackup}) {
   const [reportDirty,setReportDirty]=useState(false),[lifecycleDirty,setLifecycleDirty]=useState(false);
   useEffect(()=>{onDraftChange?.(reportDirty||lifecycleDirty);},[reportDirty,lifecycleDirty,onDraftChange]);
   useEffect(()=>()=>onDraftChange?.(false),[onDraftChange]);
@@ -131,6 +132,7 @@ export function ProjectOverview({project, result, onSave, onUpload, onReview, on
   return <main className="project-content refined-project-content">
     <div className="project-heading"><div><p className="eyebrow">实践项目{archived(project) ? " · 已归档" : ""}</p><h1>{project.name}</h1>{project.description && <p className="project-description">{project.description}</p>}</div>{(onArchive || onPackage) && <details className="project-more"><summary>更多 <IconChevronDown size={15}/></summary><div>{onPackage && <button onClick={onPackage} disabled={busy}><IconDownload size={16}/>导出项目备份</button>}{onArchive && <button onClick={() => onArchive(!archived(project))} disabled={busy}><IconArchive size={16}/>{archived(project) ? "恢复进行中" : "归档项目"}</button>}</div></details>}</div>
     {project.imported_from && <p className="import-notice" role="note">{isImportedUnverified(result, project.history, project.imported_from) ? "外部交接副本：历史判断尚未在本机复核，请检查纳入材料并复查。" : "由交接副本创建 · 当前核对状态与旧历史分别保存。"}</p>}
+    <ProjectBackups onAction={onBackup} busy={busy} dirty={hasPracticeDraft||hasEdits}/>
     <nav className="project-sections" aria-label="项目工作区">
       {[["overview","项目概览"],["guidance","实践指导"],["actions","行动与记录"]].map(([id,label])=><button key={id} aria-current={section===id?'page':undefined} onClick={()=>selectSection(id)}>{label}</button>)}
     </nav>

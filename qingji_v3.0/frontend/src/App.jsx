@@ -450,6 +450,24 @@ export function App() {
     }catch(e){setError(e.message);}finally{setBusy(false);}
   }
 
+  async function backupAction(action,item) {
+    if(busy||operationRef.current)throw new Error("请等待当前保存完成。");
+    const id=projectRef.current.id;
+    if(action==='list')return request(`/api/backups?id=${encodeURIComponent(id)}`);
+    if(action==='download'){
+      const data=await request(`/api/backup?id=${encodeURIComponent(id)}&backup_id=${encodeURIComponent(item.id)}`);
+      downloadText(`${item.name}_版本${item.version}.qingji.json`,JSON.stringify(data),"application/json;charset=utf-8");return;
+    }
+    if((action==='create'||action==='restore')&&practiceDraft)throw new Error("请先保存当前输入。");
+    setBusy(true);
+    try {
+      await flushEdits();
+      const data=await request('/api/projects',{action:'backup_'+action,id,version:projectRef.current.version,backup_id:item?.id,actor:actorName});
+      if(action==='restore'){acceptProject(data);setToast("已恢复为独立副本，请检查材料范围并重新复查。");}
+      return data;
+    }finally{setBusy(false);}
+  }
+
   async function exportPackage() {
     if(busy)return;
     setBusy(true);setError("");
@@ -824,7 +842,7 @@ export function App() {
         onSave={()=>saveDetails({materials})} onUpload={()=>materialsInput.current?.click()} onQuickRecord={()=>openQuickRecord()} onEdit={openQuickRecord} onRemove={removeMaterial}
         onPreview={m=>setCitation({document_id:m.id,start:0,end:0,quote:"",live:true})} onPreviewCitation={c=>setCitation({...c,live:false})} onLocateIssue={locateIssue} onReview={()=>navigate("review")} onRecheck={()=>recheck(true)}
         hasReport={!!report?.text?.trim()} allowAI={allowAI} aiConfigured={status?.ai_configured} busy={busy} needsReview={project.needs_review}/>
-      : <ProjectOverview onReportDraftRestored={()=>setReportRequest(null)} currentReport={currentReport} key={project.id} reportRequest={reportRequest} onDraftChange={setPracticeDraft} hasPracticeDraft={practiceDraft} onPractice={async(action, values)=>{const p=await teamAction(action,values,"实践进展已保存");acceptProject(p,"project",{preserveTab:true});return p;}} project={project} result={result} onSave={saveDetails} onUpload={()=>reportInput.current?.click()} onReview={()=>navigate("review")}
+      : <ProjectOverview onBackup={backupAction} onReportDraftRestored={()=>setReportRequest(null)} currentReport={currentReport} key={project.id} reportRequest={reportRequest} onDraftChange={setPracticeDraft} hasPracticeDraft={practiceDraft} onPractice={async(action, values)=>{const p=await teamAction(action,values,"实践进展已保存");acceptProject(p,"project",{preserveTab:true});return p;}} project={project} result={result} onSave={saveDetails} onUpload={()=>reportInput.current?.click()} onReview={()=>navigate("review")}
         deliveryCheck={<DeliveryCheck version={project.version} hasEdits={editing||JSON.stringify(workingState())!==savedState.current} busy={busy} onCheck={loadDeliveryCheck} onNavigate={navigate}/>}
         onMaterials={()=>navigate("materials")} onQuickRecord={()=>openQuickRecord()} onRecheck={()=>recheck(true)} onTask={taskAction} onLocate={locateTask} onRevision={showRevision} revision={revision} revisionLoading={revisionLoading}
         allowAI={allowAI} aiConfigured={status?.ai_configured} busy={busy} actor={actorId} onActor={setActor} hasEdits={hasEdits||editing}
