@@ -4,7 +4,7 @@ import sqlite3
 import uuid
 from contextlib import closing
 from core.projects import ProjectConflict
-from core.project_packages import export_package, import_package, _json_bytes
+from core.project_packages import export_package, import_package, validate_package, _json_bytes
 from core.review import ReviewError
 
 MAX_BACKUPS = 20
@@ -63,3 +63,43 @@ def delete_backup(store, project_id, backup_id):
         if not cursor.rowcount:
             raise ReviewError('找不到这份项目备份，请刷新列表。')
     return list_backups(store, project_id)
+
+
+def backup_library(store, query='', page=0):
+    if not isinstance(query,str) or len(query)>200 or type(page) is not int or not 0<=page<=10000:
+        raise ReviewError('备份搜索条件无效。')
+    # Literal substring search: SQL wildcard characters in names have no special meaning.
+    with closing(connect(store)) as db:
+        db.execute('BEGIN')
+        params=(query.strip(),)
+        where='WHERE instr(lower(name),lower(?))>0'
+        total=db.execute('SELECT COUNT(*) FROM backups '+where,params).fetchone()[0]
+        rows=db.execute('SELECT id,project_id,version,created_at,name,size FROM backups '+where+' ORDER BY rowid DESC LIMIT 20 OFFSET ?',params+(page*20,)).fetchall()
+    return {'backups':[dict(zip(('id','project_id','version','created_at','name','size'),row)) for row in rows],
+            'total':total,'page':page,'page_size':20}
+
+
+def preview_backup(store, project_id, backup_id):
+    package=read_backup(store,project_id,backup_id)
+    payload=validate_package(package)
+    p=payload['project']
+    if p['id']!=project_id:raise ReviewError('备份来源标识不匹配，请使用完整原文件。')
+    state=p.get('lifecycle') or {}
+    saved={'name':p['name'],'version':p['version'],'updated_at':p['updated_at'],
+           'materials':len(p['materials']),'tasks':len(p['tasks']),
+           'observations':len(state.get('observations',[])),'questions':[q['text'] for q in state.get('questions',[])],
+           'reviews':len(payload['revisions']),'analyses':len(payload.get('analyses',[])),
+           'report_chars':len(p['report']['text']),'report_name':p['report']['name']}
+    current=None;availability='missing'
+    try:
+        if not store.path.exists():raise ReviewError("找不到原项目库。")
+        value=store.get(project_id)
+        current={'name':value['name'],'version':value['version'],'updated_at':value['updated_at'],
+                 'materials':len(value['materials']),'tasks':len(value['tasks'])}
+        availability='available'
+    except ReviewError:
+        pass
+    except sqlite3.DatabaseError:
+        availability='unreadable'
+    return {'saved':saved,'current':current,'availability':availability,'package_version':package['schema_version'],
+            'exported_at':package['exported_at']}

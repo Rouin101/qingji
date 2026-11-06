@@ -1,0 +1,19 @@
+import assert from 'node:assert/strict';
+import {chromium} from 'playwright-core';
+import {mkdir,readFile,writeFile} from 'node:fs/promises';
+const base='http://127.0.0.1:8786',out='../design/iterations/2026-11-06/backup-library',seed=JSON.parse(await readFile(out+'/seed.json','utf8'));await mkdir(out,{recursive:true});
+const b=await chromium.launch({executablePath:'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',headless:true}),ctx=await b.newContext({viewport:{width:1440,height:1000}}),page=await ctx.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));page.on('dialog',d=>d.accept());
+const lib=page.getByRole('region',{name:'本机备份库'});
+async function search(text){await lib.getByLabel('搜索备份项目').fill(text);const response=page.waitForResponse(r=>r.url().includes('/api/backup-library'));await lib.getByRole('button',{name:'搜索备份',exact:true}).click();await response;await lib.getByText(/正在处理备份/).waitFor({state:'hidden'});}
+async function open(){await page.goto(base);await lib.getByRole('button',{name:'本机备份库',exact:true}).click();await lib.getByText(/正在处理备份/).waitFor({state:'hidden'});}
+try{
+assert.equal((await ctx.request.get(base+'/api/project?id='+seed.source_id)).status(),404);
+await open();await search(seed.name);await lib.getByText('找到 1 份备份 · 第 1 页',{exact:true}).waitFor();await lib.getByRole('button',{name:'预览备份内容'}).click();const preview=lib.getByRole('region',{name:'备份内容预览'});await preview.getByText('当前项目库中没有原项目；这份备份仍可恢复为副本。').waitFor();
+const download=page.waitForEvent('download');await lib.getByRole('button',{name:'下载备份文件'}).click();const file=JSON.parse(await readFile(await(await download).path(),'utf8'));assert.equal(file.payload.project.report.text,'备份中的原报告');
+for(const width of [390,768,1440]){await page.setViewportSize({width,height:1000});assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));await lib.screenshot({path:out+'/library-'+width+'.png'});}
+await preview.getByRole('button',{name:'按此备份恢复副本'}).click();await page.getByRole('heading',{name:seed.name+'（交接副本）',exact:true}).waitFor();const list=await(await ctx.request.get(base+'/api/projects')).json();const restored=list.projects.find(p=>p.name===seed.name+'（交接副本）');assert(restored);assert.notEqual(restored.id,seed.source_id);assert.equal((await(await ctx.request.get(base+'/api/project?id='+restored.id)).json()).report.text,'备份中的原报告');assert.deepEqual(await(await ctx.request.get(base+'/api/project?id='+seed.kept.id)).json(),seed.kept);
+await open();await search('不存在的备份查询');await lib.getByText(/没有找到匹配的本机备份/).waitFor();await search('虚构损坏备份');await lib.getByRole('button',{name:'预览备份内容'}).first().click();await lib.getByRole('alert').waitFor();assert.equal(await lib.getByRole('button',{name:'按此备份恢复副本'}).count(),0);
+await search(seed.name);await page.route('**/api/backup-preview**',r=>r.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'虚构预览失败'})}));await lib.getByRole('button',{name:'预览备份内容'}).click();await lib.getByRole('alert').filter({hasText:'虚构预览失败'}).waitFor();await page.unroute('**/api/backup-preview**');await lib.getByRole('button',{name:'预览备份内容'}).click();await preview.waitFor();
+await lib.getByRole('button',{name:'删除这份备份'}).click();await lib.getByText('找到 0 份备份 · 第 1 页',{exact:true}).waitFor();assert.equal((await(await ctx.request.get(base+'/api/backups?id='+seed.kept.id)).json()).backups.length,1);assert.equal((await ctx.request.get(base+'/api/project?id='+restored.id)).status(),200);
+assert.deepEqual(errors,[]);const result={status:'passed',checks:['首页搜索孤立备份','预览及源项目缺失提示','完整下载','恢复副本且不覆盖其他项目','空搜索','损坏备份拒绝恢复','预览失败重试','精确删除不影响项目与其他备份','390/768/1440布局'],errors};await writeFile(out+'/results.json',JSON.stringify(result,null,2));console.log(JSON.stringify(result));
+}catch(e){await page.screenshot({path:out+'/failure.png',fullPage:true});console.error(e);process.exitCode=1;}finally{await b.close();}
