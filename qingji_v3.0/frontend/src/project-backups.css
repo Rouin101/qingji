@@ -1,0 +1,5 @@
+.project-backups{border-top:1px solid #e5dcf4;margin-top:24px;padding:20px 0;font-size:16px}
+.project-backups p{line-height:1.7;margin:10px 0}.project-backups .muted{color:#706780}
+.backup-actions{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.project-backups ul{list-style:none;padding:0;margin:16px 0}.project-backups li{padding:18px 0;border-top:1px solid #e5dcf4;display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.project-backups li strong{overflow-wrap:anywhere}.project-backups [role=alert]{color:#9b4028}
