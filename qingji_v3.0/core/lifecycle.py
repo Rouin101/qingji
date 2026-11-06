@@ -277,12 +277,15 @@ def save_observation_link(store, ident, version, item, observation_id=None, acto
         detail='更新阶段发现与问题关联' if observation_id else '将已有材料关联实践问题')
 
 
-def report_outline(project):
+def report_outline(project, question_id=""):
     s=state_of(project); checked_brief(s['brief']); checked_questions(s['questions'])
+    if question_id and not any(q['id']==question_id for q in s['questions']):
+        raise ReviewError('这个实践问题已不存在，请重新选择。')
     eligible={m['id']:m for m in project['materials'] if m['enabled'] and m['consent_status']=='confirmed'}
-    lines=[s['brief']['topic']+' · 实践报告初稿','', '一、实践目标',s['brief']['goal'],'',
+    lines=[s['brief']['topic']+(' · 问题整理稿' if question_id else ' · 实践报告初稿'),'', '一、实践目标',s['brief']['goal'],'',
            '二、实践范围',f'对象：{s["brief"]["audience"] or "待补充"}；地点：{s["brief"]["location"] or "待补充"}；时间：{s["brief"]["timeframe"] or "待补充"}','','三、问题与实际记录']
     for q in s['questions']:
+        if question_id and q['id'] != question_id:continue
         lines.extend(['',q['text']])
         obs=[o for o in s['observations'] if o['question_id']==q['id'] and o['material_id'] in eligible]
         if not obs:lines.append('尚无已授权纳入的关联记录，暂不能据此作出结论。')

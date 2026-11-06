@@ -338,7 +338,7 @@ class Handler(BaseHTTPRequestHandler):
                     p=STORE.get(project_id)
                     if int(expected)!=p['version']:
                         return self._json(409,{'error':'项目已在其他窗口更新，请刷新项目后重新整理。'})
-                    return self._json(200,{'version':p['version'],'text':report_outline(p)})
+                    return self._json(200,{'version':p['version'],'question_id':args.get('question_id',[''])[0],'text':report_outline(p,args.get('question_id',[''])[0])})
                 if route=='/api/practice':
                     from core.lifecycle import practice_view
                     return self._json(200,practice_view(STORE.get(project_id)))
