@@ -187,10 +187,12 @@ def question_analysis(body):
         raise ProjectConflict('项目资料已更新，请重新打开后分析。')
     if p.get('archived'):
         raise ReviewError('请先恢复进行中的项目再生成分析。')
+    from core.analysis_history import ensure_capacity,save_analysis
+    ensure_capacity(STORE,project_id)
     result=synthesize(p,body.get('question_id'),configured_completion)
     if STORE.get(project_id)['version']!=p['version']:
         raise ProjectConflict('分析期间项目已更新，本次结果不再适用，请重新生成。')
-    return result
+    return save_analysis(STORE,p,result)
 
 
 def project_action(body):
@@ -211,6 +213,9 @@ def project_action(body):
     version=body.get("version")
     if not isinstance(project_id,str) or len(project_id)>80:
         raise ReviewError("项目标识不完整。")
+    if action=="analysis_delete":
+        from core.analysis_history import delete_analysis
+        return delete_analysis(STORE,project_id,body.get("history_id"))
     if action in {"backup_create", "backup_restore", "backup_delete"}:
         from core import project_backups
         if action == "backup_create":
@@ -338,12 +343,15 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {"ai_configured": ai_configured(), "app": "qingji-v3", "formats": ["docx", "pdf", "txt", "md"]})
         if route == "/api/example":
             return self._json(200, example_result())
-        if route in {"/api/backups", "/api/backup", "/api/projects", "/api/project", "/api/revision", "/api/package", "/api/delivery", "/api/practice", "/api/practice-report"}:
+        if route in {"/api/analyses", "/api/backups", "/api/backup", "/api/projects", "/api/project", "/api/revision", "/api/package", "/api/delivery", "/api/practice", "/api/practice-report"}:
             try:
                 args=parse_qs(urlsplit(self.path).query)
                 if route=="/api/projects":
                     return self._json(200,{"projects":STORE.list()})
                 project_id=args.get("id",[""])[0]
+                if route=="/api/analyses":
+                    from core.analysis_history import history
+                    return self._json(200,history(STORE,project_id,args.get("question_id",[""])[0]))
                 if route in {"/api/backups", "/api/backup"}:
                     from core import project_backups
                     if route == "/api/backups":

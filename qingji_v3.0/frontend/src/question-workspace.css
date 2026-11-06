@@ -6,3 +6,5 @@
 .question-workspace small{color:#706780}
 
 .question-synthesis{border-top:1px solid #e5dcf4;padding:20px 0}.question-synthesis blockquote{margin:12px 0;padding:8px 16px;border-left:3px solid #b39bd6;background:#f8f5fc}.question-synthesis article{padding:12px 0}.question-synthesis [role=alert]{color:#9b4028}
+
+.synthesis-history>div{padding:12px 0;border-bottom:1px solid #e5dcf4}.synthesis-history button{margin-right:16px;margin-bottom:8px}

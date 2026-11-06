@@ -53,6 +53,13 @@ def synthesize(project, question_id, complete):
         data=json.loads(raw)
     except (ValueError,RecursionError) as exc:
         raise ReviewError('未能读取阶段分析，请重试；没有修改项目。') from exc
+    data=validate_analysis(data,context)
+    return {'mode':'ai','question_id':question_id,'version':project['version'],'fingerprint':fingerprint,
+            'analysis':data,'material_count':len({r['material_id'] for r in context['records']}),
+            'changed_sources':any(r['source_changed'] for r in context['records'])}
+
+
+def validate_analysis(data,context):
     if not isinstance(data,dict) or set(data)!={'findings','differences','questions','limits'}:
         raise ReviewError('阶段分析结构不完整，请重试。')
     sources={r['observation_id']:r for r in context['records']}
@@ -80,6 +87,4 @@ def synthesize(project, question_id, complete):
     if not isinstance(data['limits'],list) or not 1<=len(data['limits'])<=5:
         raise ReviewError('阶段分析未说明适用限制。')
     data['limits']=[txt(x,'分析限制',400,True) for x in data['limits']]
-    return {'mode':'ai','question_id':question_id,'version':project['version'],'fingerprint':fingerprint,
-            'analysis':data,'material_count':len({r['material_id'] for r in context['records']}),
-            'changed_sources':any(r['source_changed'] for r in context['records'])}
+    return data

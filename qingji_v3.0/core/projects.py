@@ -79,6 +79,7 @@ class ProjectStore:
         db.execute("PRAGMA foreign_keys=ON")
         db.execute("CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, data TEXT NOT NULL)")
         db.execute("CREATE TABLE IF NOT EXISTS revisions (id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), created_at TEXT NOT NULL, data TEXT NOT NULL)")
+        db.execute("CREATE TABLE IF NOT EXISTS analyses (id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), data TEXT NOT NULL)")
         db.commit()
         return db
 

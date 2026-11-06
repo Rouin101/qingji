@@ -1,5 +1,5 @@
 export function candidateBlock(project, result, group, item) {
-  if(result.version!==project.version)throw new Error('分析对应旧版本，请重新生成。');
+  if(result.current===false||result.version!==project.version)throw new Error('分析对应旧版本，请重新生成。');
   const question=project.lifecycle.questions.find(q=>q.id===result.question_id);
   if(!question||!result.analysis[group]?.includes(item))throw new Error('请选择当前分析中的候选。');
   const labels={findings:'阶段理解',differences:'不同反馈',questions:'待了解事项'};
