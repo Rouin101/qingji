@@ -260,6 +260,9 @@ def project_action(body):
         return STORE.members(project_id,version,body.get("members"),actor=actor)
     if action=="task_detail":
         return STORE.task_detail(project_id,version,body.get("task_id"),body.get("changes"),actor=actor)
+    if action=="create_followup":
+        from core.followup_actions import create_followup
+        return create_followup(STORE,project_id,version,body,actor)
     if action=="create_task":
         return STORE.create_task(project_id,version,body.get("action_text"),
             assignee_id=body.get("assignee_id",""),due_date=body.get("due_date",""),notes=body.get("notes",""),actor=actor,question_id=body.get("question_id",""))
