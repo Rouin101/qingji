@@ -1,3 +1,4 @@
+import QuestionWorkspace from './QuestionWorkspace.jsx';
 import ProjectBackups from './ProjectBackups.jsx';
 import {MaterialScope,materialBudget} from './MaterialScope.jsx';
 import {ReportDraft} from './ReportDraft.jsx';
@@ -282,6 +283,7 @@ export function ProjectOverview({project, result, onSave, onUpload, onReview, on
     </div>
     {onPractice && <div hidden={section==='overview'}><LifecyclePlanner reportDraft={reportDirty} findingsRequest={findingsRequest} recordRequest={recordRequest} key={project.id} section={section} onDraftChange={setLifecycleDirty} project={project} onAction={async(action,values)=>{const p=await onPractice(action,values);if(action==='practice_report')setSection('overview');return p;}} busy={busy || archived(project)} aiConfigured={aiConfigured} onMaterials={onMaterials}/></div>}
     <div hidden={section!=="overview"}>
+    <QuestionWorkspace project={project} busy={busy||archived(project)} hasDraft={hasPracticeDraft||hasEdits} onRecord={target=>{setSection("actions");setRecordRequest({...target,sequence:Date.now()});}} onRecords={target=>{setSection("actions");setFindingsRequest({...target,sequence:Date.now()});}}/>
     <details className="project-settings"><summary>项目名称与简介</summary><form onSubmit={event => {event.preventDefault();const fields = new FormData(event.currentTarget);onSave({name: fields.get("name"), description: fields.get("description")});}}><label>项目名称<input name="name" defaultValue={project.name} maxLength={200} required disabled={busy}/></label><label>实践主题、地点与对象<textarea name="description" defaultValue={project.description} maxLength={2000} rows={3} disabled={busy}/></label><button className="secondary" disabled={busy}>保存项目信息</button></form></details>
     <section className="project-report-card">
       <div className="report-card-heading"><span className="report-card-icon"><IconFileText size={24}/></span><div><h2>报告与结论</h2><p>{project.report.text ? project.report.name : "上传报告，或粘贴准备核对的文字。"}</p></div></div>

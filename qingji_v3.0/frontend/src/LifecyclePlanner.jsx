@@ -70,10 +70,11 @@ export function LifecyclePlanner({project,onAction,busy,aiConfigured,onMaterials
   useEffect(()=>{
     if(!recordRequest)return;
     const task=project.tasks.find(t=>t.id===recordRequest.taskId && t.kind==='practice');
-    const questionId=s?.task_links?.[task?.id];
-    if(!task || !questionId || busy)return;
-    if(dirty.record && recordTarget?.taskId!==task.id && !window.confirm('当前实际记录尚未保存。离开这份输入，改记另一项行动？已有浏览器备份会保留。'))return;
-    if(!dirty.record || recordTarget?.taskId!==task.id){setRecordTarget({taskId:task.id,questionId});setRecordVersion(v=>v+1);mark('record',false);}
+    const questionId=task?s?.task_links?.[task.id]:recordRequest.questionId;
+    const targetTaskId=task?.id||'';
+    if(!s?.questions.some(q=>q.id===questionId) || busy)return;
+    if(dirty.record && (recordTarget?.taskId!==targetTaskId||recordTarget?.questionId!==questionId) && !window.confirm('当前实际记录尚未保存。离开这份输入，改记另一项行动？已有浏览器备份会保留。'))return;
+    if(!dirty.record || (recordTarget?.taskId!==targetTaskId||recordTarget?.questionId!==questionId)){setRecordTarget({taskId:targetTaskId,questionId});setRecordVersion(v=>v+1);mark('record',false);}
     setRecording(true);setFocusRecord(v=>v+1);
   },[recordRequest]);
   useEffect(()=>{

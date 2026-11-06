@@ -10,7 +10,7 @@ export function PracticeFindings({project, view, busy, onEdit, onMaterials, requ
   const details=useRef(null), heading=useRef(null);
   useEffect(()=>{
     if(!request)return;
-    setQuestion('');setTask(request.taskId||'');setQuery('');setRecord(request.observationId||'');setSourceStatus('');
+    setQuestion(request.questionId||'');setTask(request.taskId||'');setQuery('');setRecord(request.observationId||'');setSourceStatus('');
     if(details.current)details.current.open=true;
     const frame=requestAnimationFrame(()=>{heading.current?.focus({preventScroll:true});heading.current?.scrollIntoView({block:'center'});});
     return()=>cancelAnimationFrame(frame);
