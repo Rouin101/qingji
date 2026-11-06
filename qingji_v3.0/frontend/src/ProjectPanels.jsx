@@ -100,7 +100,7 @@ function RevisionDiscussion({comments = [], previous = false}) {
   </details>;
 }
 
-export function ProjectOverview({project, result, onSave, onUpload, onReview, onMaterials, onRecheck, onTask, onLocate, onRevision, revision, revisionLoading, allowAI, onAllowAI, aiConfigured, busy, onMembers, onTaskDetail, onCreateTask, onComment, onArchive, onPackage, actor, onActor, onQuickRecord, hasEdits, deliveryCheck, onPractice, onDraftChange, hasPracticeDraft, reportRequest, currentReport, onReportDraftRestored, onBackup}) {
+export function ProjectOverview({project, result, onSave, onUpload, onReview, onMaterials, onRecheck, onTask, onLocate, onRevision, revision, revisionLoading, allowAI, onAllowAI, aiConfigured, busy, onMembers, onTaskDetail, onCreateTask, onComment, onArchive, onPackage, actor, onActor, onQuickRecord, hasEdits, deliveryCheck, onPractice, onDraftChange, hasPracticeDraft, reportRequest, currentReport, onReportDraftRestored, onBackup, onFollowup}) {
   const [candidateRequest,setCandidateRequest]=useState(null),[candidatePending,setCandidatePending]=useState(false);
   async function stageCandidate(block,version){
     if(busy||candidatePending||hasPracticeDraft||hasEdits)throw new Error('请先保存当前输入，再带入候选。');
@@ -112,8 +112,9 @@ export function ProjectOverview({project, result, onSave, onUpload, onReview, on
       setCandidateRequest({block,version,sequence:Date.now()});setSection('overview');
     }finally{setCandidatePending(false);}
   }
+  const [followupDirty,setFollowupDirty]=useState(false);
   const [reportDirty,setReportDirty]=useState(false),[lifecycleDirty,setLifecycleDirty]=useState(false);
-  useEffect(()=>{onDraftChange?.(reportDirty||lifecycleDirty);},[reportDirty,lifecycleDirty,onDraftChange]);
+  useEffect(()=>{onDraftChange?.(reportDirty||lifecycleDirty||followupDirty);},[reportDirty,lifecycleDirty,followupDirty,onDraftChange]);
   useEffect(()=>()=>onDraftChange?.(false),[onDraftChange]);
   const [section, setSection] = useState(project.lifecycle?.questions?.length || project.report.text ? "overview" : "guidance");
   useEffect(()=>{if(reportRequest?.id===project.id){setSection(reportRequest.section||"overview");if(reportRequest.section==="actions")setFindingsRequest({taskId:"",observationId:reportRequest.observationId||"",sequence:reportRequest.sequence});}},[reportRequest,project.id]);
@@ -294,7 +295,7 @@ export function ProjectOverview({project, result, onSave, onUpload, onReview, on
     </div>
     {onPractice && <div hidden={section==='overview'}><LifecyclePlanner reportDraft={reportDirty} findingsRequest={findingsRequest} recordRequest={recordRequest} key={project.id} section={section} onDraftChange={setLifecycleDirty} project={project} onAction={async(action,values)=>{const p=await onPractice(action,values);if(action==='practice_report')setSection('overview');return p;}} busy={busy || archived(project)} aiConfigured={aiConfigured} onMaterials={onMaterials}/></div>}
     <div hidden={section!=="overview"}>
-    <QuestionWorkspace onCandidate={stageCandidate} project={project} busy={busy||candidatePending||archived(project)} hasDraft={hasPracticeDraft||hasEdits} onRecord={target=>{setSection("actions");setRecordRequest({...target,sequence:Date.now()});}} onRecords={target=>{setSection("actions");setFindingsRequest({...target,sequence:Date.now()});}}/>
+    <QuestionWorkspace onFollowup={onFollowup} onFollowupDirty={setFollowupDirty} onCandidate={stageCandidate} project={project} busy={busy||candidatePending||archived(project)} hasDraft={hasPracticeDraft||hasEdits} onRecord={target=>{setSection("actions");setRecordRequest({...target,sequence:Date.now()});}} onRecords={target=>{setSection("actions");setFindingsRequest({...target,sequence:Date.now()});}}/>
     <details className="project-settings"><summary>项目名称与简介</summary><form onSubmit={event => {event.preventDefault();const fields = new FormData(event.currentTarget);onSave({name: fields.get("name"), description: fields.get("description")});}}><label>项目名称<input name="name" defaultValue={project.name} maxLength={200} required disabled={busy}/></label><label>实践主题、地点与对象<textarea name="description" defaultValue={project.description} maxLength={2000} rows={3} disabled={busy}/></label><button className="secondary" disabled={busy}>保存项目信息</button></form></details>
     <section className="project-report-card">
       <div className="report-card-heading"><span className="report-card-icon"><IconFileText size={24}/></span><div><h2>报告与结论</h2><p>{project.report.text ? project.report.name : "上传报告，或粘贴准备核对的文字。"}</p></div></div>
